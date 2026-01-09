@@ -139,12 +139,11 @@ fn trigger_download(filename: &str, data: &[u8]) {
     let parts = js_sys::Array::new();
     parts.push(&array);
     
-    let mut props = BlobPropertyBag::new();
-    // Default to binary/octet-stream if unknown, or png/zip specific
+    let props = BlobPropertyBag::new();
     if filename.ends_with(".zip") {
-        props.type_("application/zip");
+        props.set_type("application/zip");
     } else {
-        props.type_("image/png");
+        props.set_type("image/png");
     }
     
     let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &props).unwrap();
@@ -455,20 +454,9 @@ impl eframe::App for KitbashApp {
                 let part_rect = egui::Rect::from_min_size(part_screen_pos, egui::vec2(part_w, part_h));
 
                 // Interaction: Dragging
-                // We create an invisible "Sense" rect over the part to handle dragging.
-                // However, we must be careful with Z-Index. egui paints back-to-front.
-                // To handle selection properly, we might need a separate loop or transparent widgets.
-                // Simplest way: ui.put a transparent ImageButton or Area.
-                
-                // Let's use `ui.allocate_rect` to get interaction, then paint.
-                // Problem: allocate_rect consumes space in the layout if not careful? 
-                // No, we are in a Manual Layout (Painter). But we can still interact.
-                
                 let interact_response = ui.interact(part_rect, egui::Id::new(part.id), egui::Sense::drag());
                 
                 if interact_response.dragged() {
-                    // Update offset
-                    // Delta is in screen pixels. Need to convert to Canvas Pixels.
                     let delta = interact_response.drag_delta() / self.preview_zoom;
                     part.offset += delta;
                     self.selected_part_id = Some(part.id);
@@ -521,15 +509,24 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use wasm_bindgen::JsCast;
+
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
+        let document = web_sys::window().expect("No window found").document().expect("No document found");
+        let canvas = document
+            .get_element_by_id("the_canvas_id")
+            .expect("No element with id the_canvas_id found")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("Element is not a canvas");
+
         eframe::WebRunner::new()
             .start(
-                "the_canvas_id", // hardcoded in index.html usually
+                canvas,
                 web_options,
                 Box::new(|_cc| Ok(Box::new(KitbashApp::default()))),
             )
