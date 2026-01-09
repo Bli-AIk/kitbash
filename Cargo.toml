@@ -1,0 +1,39 @@
+[package]
+name = "kitbash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.30"
+egui = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+rfd = "0.15"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+log = "0.4"
+futures = "0.3" 
+env_logger = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
+web-sys = { version = "0.3", features = [
+    "HtmlAnchorElement", 
+    "Document", 
+    "Window", 
+    "Url", 
+    "Blob", 
+    "BlobPropertyBag",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "Element",
+    "HtmlElement",
+    "CssStyleDeclaration",
+    "Node" 
+] }
+
+[profile.release]
+opt-level = 2
