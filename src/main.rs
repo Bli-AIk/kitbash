@@ -33,56 +33,6 @@ struct LayerImage {
     visible: bool,
 }
 
-struct LayerGroup {
-    id: u64,
-    name: String,
-    children: Vec<LayerNode>,
-    transform: Transform,
-    visible: bool,
-}
-
-enum LayerNode {
-    Image(LayerImage),
-    Group(LayerGroup),
-}
-
-impl LayerNode {
-    fn id(&self) -> u64 {
-        match self {
-            LayerNode::Image(img) => img.id,
-            LayerNode::Group(grp) => grp.id,
-        }
-    }
-
-    fn name(&self) -> &str {
-        match self {
-            LayerNode::Image(img) => &img.name,
-            LayerNode::Group(grp) => &grp.name,
-        }
-    }
-
-    fn visible(&self) -> bool {
-        match self {
-            LayerNode::Image(img) => img.visible,
-            LayerNode::Group(grp) => grp.visible,
-        }
-    }
-
-    fn set_visible(&mut self, visible: bool) {
-        match self {
-            LayerNode::Image(img) => img.visible = visible,
-            LayerNode::Group(grp) => grp.visible = visible,
-        }
-    }
-
-    fn transform_mut(&mut self) -> &mut Transform {
-        match self {
-            LayerNode::Image(img) => &mut img.transform,
-            LayerNode::Group(grp) => &mut grp.transform,
-        }
-    }
-}
-
 enum AppMessage {
     ImageLoaded(String, Vec<u8>), // name, bytes
 }
@@ -91,9 +41,10 @@ struct KitbashApp {
     // Canvas Config
     canvas_size: [u32; 2],
     bg_color: egui::Color32,
+    export_scale: u32, // New: Export multiplier
     
     // State
-    root_layers: Vec<LayerNode>,
+    layers: Vec<LayerImage>, // Flat list again
     selected_layer_id: Option<u64>,
     next_id: u64,
     
@@ -103,6 +54,7 @@ struct KitbashApp {
     
     // UI State
     preview_zoom: f32,
+    canvas_pan: egui::Vec2, // New: Canvas panning
 }
 
 impl Default for KitbashApp {
@@ -111,12 +63,14 @@ impl Default for KitbashApp {
         Self {
             canvas_size: [64, 64],
             bg_color: egui::Color32::TRANSPARENT,
-            root_layers: Vec::new(),
+            export_scale: 1,
+            layers: Vec::new(),
             selected_layer_id: None,
             next_id: 0,
             msg_sender: sender,
             msg_receiver: receiver,
             preview_zoom: 4.0,
+            canvas_pan: egui::Vec2::ZERO,
         }
     }
 }
@@ -125,87 +79,52 @@ impl Default for KitbashApp {
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-struct RenderItem<'a> {
-    image: &'a image::DynamicImage,
-    texture: &'a mut Option<egui::TextureHandle>,
-    // Absolute transform (accumulated)
-    pos: egui::Vec2,
-    scale: f32,
-    id: u64,
-    name: &'a str,
-}
-
-/// Recursively flatten the layer tree into a render list, accumulating transforms
-fn flatten_layers<'a>(
-    nodes: &'a mut [LayerNode], 
-    parent_offset: egui::Vec2, 
-    parent_scale: f32,
-    items: &mut Vec<RenderItem<'a>>
-) {
-    for node in nodes {
-        if !node.visible() {
-            continue;
-        }
-
-        match node {
-            LayerNode::Image(img) => {
-                // Apply parent transform then local transform
-                // Position: ParentPos + (LocalPos * ParentScale)
-                // Scale: ParentScale * LocalScale
-                let abs_scale = parent_scale * img.transform.scale;
-                let abs_offset = parent_offset + (img.transform.offset * parent_scale);
-                
-                items.push(RenderItem {
-                    image: &img.source_image,
-                    texture: &mut img.texture,
-                    pos: abs_offset,
-                    scale: abs_scale,
-                    id: img.id,
-                    name: &img.name,
-                });
-            }
-            LayerNode::Group(grp) => {
-                let abs_scale = parent_scale * grp.transform.scale;
-                let abs_offset = parent_offset + (grp.transform.offset * parent_scale);
-                
-                flatten_layers(&mut grp.children, abs_offset, abs_scale, items);
-            }
-        }
-    }
-}
-
-/// Composite the final image based on current state
-fn composite_image(canvas_size: [u32; 2], bg_color: egui::Color32, layers: &mut [LayerNode]) -> RgbaImage {
-    let mut buffer = RgbaImage::new(canvas_size[0], canvas_size[1]);
+/// Composite the final image based on current state with export scaling
+fn composite_image(
+    canvas_size: [u32; 2], 
+    bg_color: egui::Color32, 
+    layers: &[LayerImage], 
+    export_scale: u32
+) -> RgbaImage {
+    let scale_f = export_scale as f32;
+    let width = canvas_size[0] * export_scale;
+    let height = canvas_size[1] * export_scale;
+    
+    let mut buffer = RgbaImage::new(width, height);
     
     // Fill background
     for pixel in buffer.pixels_mut() {
         *pixel = Rgba([bg_color.r(), bg_color.g(), bg_color.b(), bg_color.a()]);
     }
 
-    let mut items = Vec::new();
-    flatten_layers(layers, egui::Vec2::ZERO, 1.0, &mut items);
+    for layer in layers {
+        if !layer.visible {
+            continue;
+        }
 
-    for item in items {
-        let src_width = item.image.width();
-        let src_height = item.image.height();
+        let src_width = layer.source_image.width();
+        let src_height = layer.source_image.height();
         
-        let target_width = (src_width as f32 * item.scale).round() as u32;
-        let target_height = (src_height as f32 * item.scale).round() as u32;
+        // Scale = LayerScale * ExportScale
+        let final_scale = layer.transform.scale * scale_f;
+        
+        let target_width = (src_width as f32 * final_scale).round() as u32;
+        let target_height = (src_height as f32 * final_scale).round() as u32;
 
         if target_width == 0 || target_height == 0 {
             continue;
         }
 
-        let resized = item.image.resize_exact(
+        let resized = layer.source_image.resize_exact(
             target_width, 
             target_height, 
             FilterType::Nearest
         );
 
-        // Pixel-Perfect Integer Alignment
-        let x = item.pos.x.round() as i64;
-        let y = item.pos.y.round() as i64;
+        // Position = LayerOffset * ExportScale
+        // And round to nearest integer for crisp edges
+        let x = (layer.transform.offset.x * scale_f).round() as i64;
+        let y = (layer.transform.offset.y * scale_f).round() as i64;
 
         image::imageops::overlay(&mut buffer, &resized, x, y);
     }
@@ -257,39 +176,6 @@ fn trigger_download(filename: &str, data: &[u8]) {
 }
 
 // ----------------------------------------------------------------------------
-// Logic Helpers for Tree Mutation
-// ----------------------------------------------------------------------------
-
-fn find_layer_mut<'a>(layers: &'a mut [LayerNode], id: u64) -> Option<&'a mut LayerNode> {
-    for node in layers {
-        if node.id() == id {
-            return Some(node);
-        }
-        if let LayerNode::Group(grp) = node {
-            if let Some(found) = find_layer_mut(&mut grp.children, id) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-fn delete_layer(layers: &mut Vec<LayerNode>, id: u64) -> bool {
-    if let Some(idx) = layers.iter().position(|x| x.id() == id) {
-        layers.remove(idx);
-        return true;
-    }
-    for node in layers {
-        if let LayerNode::Group(grp) = node {
-            if delete_layer(&mut grp.children, id) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-// ----------------------------------------------------------------------------
 // App Implementation
 // ----------------------------------------------------------------------------
 
@@ -310,37 +196,7 @@ impl eframe::App for KitbashApp {
                             transform: Transform::default(),
                             visible: true,
                         };
-                        
-                        // Logic to add to selected group or root
-                        let mut target_group_id = None;
-                        
-                        if let Some(sel_id) = self.selected_layer_id {
-                            // First pass: check if selected node is a group
-                            // We can't hold mutable reference to self.root_layers while checking
-                            // So we just find the ID
-                            if let Some(node) = find_layer_mut(&mut self.root_layers, sel_id) {
-                                if let LayerNode::Group(_) = node {
-                                    target_group_id = Some(sel_id);
-                                }
-                            }
-                        }
-
-                        if let Some(grp_id) = target_group_id {
-                            if let Some(node) = find_layer_mut(&mut self.root_layers, grp_id) {
-                                if let LayerNode::Group(grp) = node {
-                                    grp.children.push(LayerNode::Image(layer));
-                                } else {
-                                    // Should not happen given logic above, but fallback
-                                    self.root_layers.push(LayerNode::Image(layer));
-                                }
-                            } else {
-                                self.root_layers.push(LayerNode::Image(layer));
-                            }
-                        } else {
-                            self.root_layers.push(LayerNode::Image(layer));
-                        }
-                        
-                        // Select the new layer? Maybe just keep it simple.
+                        self.layers.push(layer);
                     } else {
                         eprintln!("Failed to decode image: {}", name);
                     }
@@ -362,9 +218,9 @@ impl eframe::App for KitbashApp {
                 // Canvas Settings
                 ui.collapsing("Canvas Setup", |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Width:");
+                        ui.label("Base W:");
                         ui.add(egui::DragValue::new(&mut app.canvas_size[0]).range(16..=1024));
-                        ui.label("Height:");
+                        ui.label("Base H:");
                         ui.add(egui::DragValue::new(&mut app.canvas_size[1]).range(16..=1024));
                     });
                     ui.horizontal(|ui| {
@@ -372,127 +228,77 @@ impl eframe::App for KitbashApp {
                         ui.color_edit_button_srgba(&mut app.bg_color);
                     });
                     ui.horizontal(|ui| {
-                        ui.label("Preview Zoom:");
+                        ui.label("View Zoom:");
                         ui.add(egui::Slider::new(&mut app.preview_zoom, 0.5..=10.0));
                     });
+                    
+                    if ui.button("Reset View").clicked() {
+                        app.canvas_pan = egui::Vec2::ZERO;
+                        app.preview_zoom = 4.0;
+                    }
                 });
 
                 ui.separator();
                 
                 // Asset Pipeline
-                ui.heading("Assets & Layers");
-                ui.horizontal(|ui| {
-                    if ui.button("Import Images...").clicked() {
-                        let sender = app.msg_sender.clone();
-                        let task = async move {
-                            if let Some(handles) = rfd::AsyncFileDialog::new()
-                                .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
-                                .pick_files() // BATCH IMPORT
-                                .await 
-                            {
-                                for handle in handles {
-                                    let data = handle.read().await;
-                                    let name = handle.file_name();
-                                    let _ = sender.send(AppMessage::ImageLoaded(name, data));
-                                }
+                ui.heading("Layers");
+                if ui.button("Import Images (Batch)...").clicked() {
+                    let sender = app.msg_sender.clone();
+                    let task = async move {
+                        if let Some(handles) = rfd::AsyncFileDialog::new()
+                            .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
+                            .pick_files()
+                            .await 
+                        {
+                            for handle in handles {
+                                let data = handle.read().await;
+                                let name = handle.file_name();
+                                let _ = sender.send(AppMessage::ImageLoaded(name, data));
                             }
-                        };
-                        
-                        #[cfg(target_arch = "wasm32")]
-                        wasm_bindgen_futures::spawn_local(task);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        std::thread::spawn(move || { futures::executor::block_on(task); });
-                    }
-                    
-                    if ui.button("New Folder").clicked() {
-                        let id = app.next_id;
-                        app.next_id += 1;
-                        let folder = LayerGroup {
-                            id,
-                            name: format!("Folder {}", id),
-                            children: Vec::new(),
-                            transform: Transform::default(),
-                            visible: true,
-                        };
-                        app.root_layers.push(LayerNode::Group(folder));
-                    }
-                });
-
-                ui.separator();
-                ui.label("Layers Tree:");
-                
-                // Recursive Tree UI
-                fn draw_tree(
-                    ui: &mut egui::Ui, 
-                    layers: &mut Vec<LayerNode>, 
-                    selected_id: &mut Option<u64>,
-                    to_delete: &mut Option<u64>
-                ) {
-                    let mut move_op = None; // (index, direction -1 or +1)
-                    let layers_len = layers.len();
-
-                    for (idx, node) in layers.iter_mut().enumerate() {
-                        let node_id = node.id();
-                        let is_selected = Some(node_id) == *selected_id;
-                        
-                        ui.horizontal(|ui| {
-                            // Indentation handled by recursion? No, by ui.indent or collapsing header
-                            
-                            // Checkbox for visibility
-                            let mut visible = node.visible();
-                            if ui.checkbox(&mut visible, "").changed() {
-                                node.set_visible(visible);
-                            }
-
-                            match node {
-                                LayerNode::Group(grp) => {
-                                    let id = ui.make_persistent_id(node_id);
-                                    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                                        .show_header(ui, |ui| {
-                                            if ui.selectable_label(is_selected, &grp.name).clicked() {
-                                                *selected_id = Some(node_id);
-                                            }
-                                        })
-                                        .body(|ui| {
-                                            draw_tree(ui, &mut grp.children, selected_id, to_delete);
-                                        });
-                                }
-                                LayerNode::Image(img) => {
-                                    if ui.selectable_label(is_selected, &img.name).clicked() {
-                                        *selected_id = Some(node_id);
-                                    }
-                                }
-                            }
-                            
-                            // Reorder buttons (local scope)
-                            if ui.button("⬆").clicked() && idx > 0 {
-                                move_op = Some((idx, -1));
-                            }
-                            if ui.button("⬇").clicked() && idx < layers_len - 1 {
-                                move_op = Some((idx, 1));
-                            }
-                            
-                            if ui.button("X").clicked() {
-                                *to_delete = Some(node_id);
-                            }
-                        });
-                    }
-
-                    if let Some((idx, dir)) = move_op {
-                        if dir == -1 {
-                            layers.swap(idx, idx - 1);
-                        } else {
-                            layers.swap(idx, idx + 1);
                         }
-                    }
+                    };
+                    
+                    #[cfg(target_arch = "wasm32")]
+                    wasm_bindgen_futures::spawn_local(task);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::spawn(move || { futures::executor::block_on(task); });
                 }
 
-                let mut to_delete = None;
-                draw_tree(ui, &mut app.root_layers, &mut app.selected_layer_id, &mut to_delete);
+                ui.separator();
                 
-                if let Some(del_id) = to_delete {
-                    delete_layer(&mut app.root_layers, del_id);
-                    if app.selected_layer_id == Some(del_id) {
+                // Layer List (Reorderable)
+                let mut move_op = None;
+                let mut delete_op = None;
+                let layers_len = app.layers.len();
+                
+                for (idx, layer) in app.layers.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        let is_selected = Some(layer.id) == app.selected_layer_id;
+                        if ui.selectable_label(is_selected, &layer.name).clicked() {
+                            app.selected_layer_id = Some(layer.id);
+                        }
+                        
+                        ui.checkbox(&mut layer.visible, "");
+                        
+                        if ui.button("⬆").clicked() && idx > 0 {
+                            move_op = Some((idx, idx - 1));
+                        }
+                        if ui.button("⬇").clicked() && idx < layers_len - 1 {
+                            move_op = Some((idx, idx + 1));
+                        }
+                        if ui.button("X").clicked() {
+                            delete_op = Some(idx);
+                        }
+                    });
+                }
+                
+                if let Some((from, to)) = move_op {
+                    app.layers.swap(from, to);
+                }
+                if let Some(idx) = delete_op {
+                    let id = app.layers[idx].id;
+                    app.layers.remove(idx);
+                    if app.selected_layer_id == Some(id) {
                         app.selected_layer_id = None;
                     }
                 }
@@ -501,34 +307,31 @@ impl eframe::App for KitbashApp {
                 
                 // Properties Panel
                 if let Some(selected_id) = app.selected_layer_id {
-                    if let Some(node) = find_layer_mut(&mut app.root_layers, selected_id) {
-                        ui.heading(format!("Properties: {}", node.name()));
-                        let transform = node.transform_mut();
+                    if let Some(layer) = app.layers.iter_mut().find(|l| l.id == selected_id) {
+                        ui.heading(format!("Properties: {}", layer.name));
                         
                         ui.horizontal(|ui| {
                             ui.label("Scale:");
-                            ui.add(egui::Slider::new(&mut transform.scale, 0.1..=5.0));
+                            ui.add(egui::Slider::new(&mut layer.transform.scale, 0.1..=5.0));
                         });
                         ui.horizontal(|ui| {
                             ui.label("Offset:");
-                            // PIXEL PERFECT: Step by 1.0
-                            ui.add(egui::DragValue::new(&mut transform.offset.x).speed(1.0).prefix("X: "));
-                            ui.add(egui::DragValue::new(&mut transform.offset.y).speed(1.0).prefix("Y: "));
+                            ui.add(egui::DragValue::new(&mut layer.transform.offset.x).speed(1.0).prefix("X: "));
+                            ui.add(egui::DragValue::new(&mut layer.transform.offset.y).speed(1.0).prefix("Y: "));
                         });
                         
-                        // Rounding button for convenience
                         if ui.button("Snap to Pixel").clicked() {
-                            transform.offset.x = transform.offset.x.round();
-                            transform.offset.y = transform.offset.y.round();
+                            layer.transform.offset.x = layer.transform.offset.x.round();
+                            layer.transform.offset.y = layer.transform.offset.y.round();
                         }
                         
-                        if ui.button("Reset Transform").clicked() {
-                            transform.scale = 1.0;
-                            transform.offset = egui::Vec2::ZERO;
+                        if ui.button("Reset").clicked() {
+                            layer.transform.scale = 1.0;
+                            layer.transform.offset = egui::Vec2::ZERO;
                         }
                     }
                 } else {
-                    ui.label("Select a layer or folder to edit properties.");
+                    ui.label("Select a layer to edit.");
                 }
                 
                 ui.separator();
@@ -536,29 +339,35 @@ impl eframe::App for KitbashApp {
                 // Export System
                 ui.heading("Export");
                 ui.horizontal(|ui| {
+                    ui.label("Export Scale:");
+                    ui.add(egui::DragValue::new(&mut app.export_scale).range(1..=10).speed(0.1));
+                });
+                
+                let current_res = format!("{} x {}", 
+                    app.canvas_size[0] * app.export_scale, 
+                    app.canvas_size[1] * app.export_scale
+                );
+                ui.label(format!("Output Res: {}", current_res));
+
+                ui.horizontal(|ui| {
                     if ui.button("Download PNG").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &mut app.root_layers);
+                        let img = composite_image(app.canvas_size, app.bg_color, &app.layers, app.export_scale);
                         let mut bytes: Vec<u8> = Vec::new();
                         img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
                         trigger_download("character.png", &bytes);
                     }
                     
                     if ui.button("Download ZIP").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &mut app.root_layers);
+                        let img = composite_image(app.canvas_size, app.bg_color, &app.layers, app.export_scale);
                         let mut png_bytes: Vec<u8> = Vec::new();
                         img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
                         
-                        // Metadata generation is complex with tree, let's just dump a simple structure or skip for now?
-                        // Requirement said "data.json needed". Let's do a simplified flat dump of render state.
-                        let mut items = Vec::new();
-                        // Reset layers for metadata capture if needed, but we can just use the helper
-                        flatten_layers(&mut app.root_layers, egui::Vec2::ZERO, 1.0, &mut items);
-                        
-                        let meta: Vec<serde_json::Value> = items.iter().map(|item| {
+                        // Metadata (Base coords)
+                        let meta: Vec<serde_json::Value> = app.layers.iter().map(|l| {
                             serde_json::json!({
-                                "name": item.name,
-                                "scale": item.scale,
-                                "offset": { "x": item.pos.x.round(), "y": item.pos.y.round() },
+                                "name": l.name,
+                                "scale": l.transform.scale,
+                                "offset": { "x": l.transform.offset.x.round(), "y": l.transform.offset.y.round() },
                             })
                         }).collect();
                         let json_str = serde_json::to_string_pretty(&meta).unwrap();
@@ -600,20 +409,33 @@ impl eframe::App for KitbashApp {
 
         // Central Canvas Area
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Draw checkerboard background
+            let available_rect = ui.available_rect_before_wrap();
+            let painter = ui.painter_at(available_rect);
+
+            // Handle Canvas Panning (Middle Mouse or Alt+Drag or Space+Drag logic)
+            // Or just drag on empty space.
+            let input = ui.input(|i| i.clone());
+            
+            // Allow panning if middle mouse is dragging
+            if input.pointer.button_down(egui::PointerButton::Middle) {
+                self.canvas_pan += input.pointer.delta();
+            }
+            // Optional: Mouse wheel zoom
+            /* 
+            if input.scroll_delta.y != 0.0 {
+                self.preview_zoom = (self.preview_zoom + input.scroll_delta.y * 0.001).clamp(0.1, 10.0);
+            }
+            */
+
+            // Calculate Canvas Rect (Centered + Pan)
             let canvas_w = self.canvas_size[0] as f32 * self.preview_zoom;
             let canvas_h = self.canvas_size[1] as f32 * self.preview_zoom;
             
-            // Center the canvas in the available rect
-            let available_rect = ui.available_rect_before_wrap();
-            let canvas_rect = egui::Rect::from_center_size(
-                available_rect.center(),
-                egui::vec2(canvas_w, canvas_h)
-            );
+            let center = available_rect.center() + self.canvas_pan;
+            let canvas_rect = egui::Rect::from_center_size(center, egui::vec2(canvas_w, canvas_h));
 
             // Draw Background (Checkerboard)
-            let painter = ui.painter_at(canvas_rect);
-            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(50)); // Dark base
+            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(50));
 
             let check_size = 8.0 * self.preview_zoom;
             let cols = (self.canvas_size[0] as f32 / 8.0).ceil() as u32;
@@ -630,70 +452,63 @@ impl eframe::App for KitbashApp {
                              egui::vec2(check_size, check_size)
                          ).intersect(canvas_rect);
                          
-                         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
+                         if rect.is_positive() {
+                             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
+                         }
                     }
                 }
             }
             
-            // Draw User Background Color
             if self.bg_color != egui::Color32::TRANSPARENT {
                 painter.rect_filled(canvas_rect, 0.0, self.bg_color);
             }
 
-            // Flatten layers for rendering
-            let mut items = Vec::new();
-            flatten_layers(&mut self.root_layers, egui::Vec2::ZERO, 1.0, &mut items);
+            // Draw Layers
+            let mut drag_delta = egui::Vec2::ZERO;
+            let mut dragged_id = None;
 
-            let mut drag_events = Vec::new(); // Collect drag events to apply later
+            for layer in &mut self.layers {
+                if !layer.visible { continue; }
 
-            for item in items {
-                // Ensure texture exists
-                let texture_id = if let Some(tex) = item.texture {
+                let texture_id = if let Some(tex) = &layer.texture {
                     tex.id()
                 } else {
                     let tex = ctx.load_texture(
-                        item.name,
+                        &layer.name,
                         egui::ColorImage::from_rgba_unmultiplied(
-                            [item.image.width() as _, item.image.height() as _],
-                            item.image.to_rgba8().as_flat_samples().as_slice(),
+                            [layer.source_image.width() as _, layer.source_image.height() as _],
+                            layer.source_image.to_rgba8().as_flat_samples().as_slice(),
                         ),
-                        egui::TextureOptions::NEAREST, // CRITICAL: Nearest Neighbor
+                        egui::TextureOptions::NEAREST,
                     );
                     let id = tex.id();
-                    *item.texture = Some(tex);
+                    layer.texture = Some(tex);
                     id
                 };
 
-                // Calculate display rect
-                // Position is absolute (relative to canvas 0,0)
-                // Pixel Perfect Alignment for Preview: Round the position
-                let aligned_pos = egui::pos2(item.pos.x.round(), item.pos.y.round());
-                
+                let aligned_pos = egui::pos2(layer.transform.offset.x.round(), layer.transform.offset.y.round());
                 let part_screen_pos = canvas_rect.min + (aligned_pos.to_vec2() * self.preview_zoom);
-                let part_w = item.image.width() as f32 * item.scale * self.preview_zoom;
-                let part_h = item.image.height() as f32 * item.scale * self.preview_zoom;
+                let part_w = layer.source_image.width() as f32 * layer.transform.scale * self.preview_zoom;
+                let part_h = layer.source_image.height() as f32 * layer.transform.scale * self.preview_zoom;
                 
                 let part_rect = egui::Rect::from_min_size(part_screen_pos, egui::vec2(part_w, part_h));
 
-                // Interaction: Dragging
-                let interact_response = ui.interact(part_rect, egui::Id::new(item.id), egui::Sense::drag());
+                // Interaction
+                let interact_response = ui.interact(part_rect, egui::Id::new(layer.id), egui::Sense::drag());
                 
                 if interact_response.dragged() {
-                    let delta = interact_response.drag_delta() / self.preview_zoom;
-                    drag_events.push((item.id, delta));
-                    self.selected_layer_id = Some(item.id);
+                    dragged_id = Some(layer.id);
+                    drag_delta = interact_response.drag_delta() / self.preview_zoom;
+                    self.selected_layer_id = Some(layer.id);
                 }
-                
                 if interact_response.clicked() {
-                    self.selected_layer_id = Some(item.id);
+                    self.selected_layer_id = Some(layer.id);
                 }
 
-                // Visual Highlight for Selection
-                if Some(item.id) == self.selected_layer_id {
+                if Some(layer.id) == self.selected_layer_id {
                     painter.rect_stroke(part_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::YELLOW));
                 }
 
-                // Paint the Texture
                 let mut mesh = egui::Mesh::with_texture(texture_id);
                 mesh.add_rect_with_uv(
                     part_rect, 
@@ -702,15 +517,13 @@ impl eframe::App for KitbashApp {
                 );
                 painter.add(mesh);
             }
-            
-            // Apply deferred drag events
-            for (id, delta) in drag_events {
-                if let Some(node) = find_layer_mut(&mut self.root_layers, id) {
-                    node.transform_mut().offset += delta;
+
+            if let Some(id) = dragged_id {
+                if let Some(layer) = self.layers.iter_mut().find(|l| l.id == id) {
+                    layer.transform.offset += drag_delta;
                 }
             }
             
-            // Canvas Border
             painter.rect_stroke(canvas_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
         });
     }
