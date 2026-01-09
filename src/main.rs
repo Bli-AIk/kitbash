@@ -79,57 +79,47 @@ impl Default for KitbashApp {
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-/// Composite the final image based on current state with export scaling
-fn composite_image(
+/// Render a single layer to a buffer (full canvas size)
+fn render_single_layer(
     canvas_size: [u32; 2], 
-    bg_color: egui::Color32, 
-    layers: &[LayerImage], 
+    layer: &LayerImage, 
     export_scale: u32
-) -> RgbaImage {
+) -> Option<RgbaImage> {
+    if !layer.visible {
+        return None;
+    }
+
     let scale_f = export_scale as f32;
     let width = canvas_size[0] * export_scale;
     let height = canvas_size[1] * export_scale;
     
     let mut buffer = RgbaImage::new(width, height);
+    // Note: Individual layers are transparent background by default
     
-    // Fill background
-    for pixel in buffer.pixels_mut() {
-        *pixel = Rgba([bg_color.r(), bg_color.g(), bg_color.b(), bg_color.a()]);
+    let src_width = layer.source_image.width();
+    let src_height = layer.source_image.height();
+    
+    let final_scale = layer.transform.scale * scale_f;
+    
+    let target_width = (src_width as f32 * final_scale).round() as u32;
+    let target_height = (src_height as f32 * final_scale).round() as u32;
+
+    if target_width == 0 || target_height == 0 {
+        return Some(buffer);
     }
 
-    for layer in layers {
-        if !layer.visible {
-            continue;
-        }
+    let resized = layer.source_image.resize_exact(
+        target_width, 
+        target_height, 
+        FilterType::Nearest
+    );
 
-        let src_width = layer.source_image.width();
-        let src_height = layer.source_image.height();
-        
-        // Scale = LayerScale * ExportScale
-        let final_scale = layer.transform.scale * scale_f;
-        
-        let target_width = (src_width as f32 * final_scale).round() as u32;
-        let target_height = (src_height as f32 * final_scale).round() as u32;
+    let x = (layer.transform.offset.x * scale_f).round() as i64;
+    let y = (layer.transform.offset.y * scale_f).round() as i64;
 
-        if target_width == 0 || target_height == 0 {
-            continue;
-        }
-
-        let resized = layer.source_image.resize_exact(
-            target_width, 
-            target_height, 
-            FilterType::Nearest
-        );
-
-        // Position = LayerOffset * ExportScale
-        // And round to nearest integer for crisp edges
-        let x = (layer.transform.offset.x * scale_f).round() as i64;
-        let y = (layer.transform.offset.y * scale_f).round() as i64;
-
-        image::imageops::overlay(&mut buffer, &resized, x, y);
-    }
+    image::imageops::overlay(&mut buffer, &resized, x, y);
     
-    buffer
+    Some(buffer)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -337,7 +327,7 @@ impl eframe::App for KitbashApp {
                 ui.separator();
                 
                 // Export System
-                ui.heading("Export");
+                ui.heading("Export (Scattered)");
                 ui.horizontal(|ui| {
                     ui.label("Export Scale:");
                     ui.add(egui::DragValue::new(&mut app.export_scale).range(1..=10).speed(0.1));
@@ -350,37 +340,46 @@ impl eframe::App for KitbashApp {
                 ui.label(format!("Output Res: {}", current_res));
 
                 ui.horizontal(|ui| {
-                    if ui.button("Download PNG").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &app.layers, app.export_scale);
-                        let mut bytes: Vec<u8> = Vec::new();
-                        img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
-                        trigger_download("character.png", &bytes);
+                    if ui.button("Download Individual PNGs").clicked() {
+                        for (i, layer) in app.layers.iter().enumerate() {
+                            if let Some(img) = render_single_layer(app.canvas_size, layer, app.export_scale) {
+                                let mut bytes: Vec<u8> = Vec::new();
+                                img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+                                let filename = format!("{}_{}.png", i, layer.name);
+                                trigger_download(&filename, &bytes);
+                            }
+                        }
                     }
                     
                     if ui.button("Download ZIP").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &app.layers, app.export_scale);
-                        let mut png_bytes: Vec<u8> = Vec::new();
-                        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
-                        
-                        // Metadata (Base coords)
-                        let meta: Vec<serde_json::Value> = app.layers.iter().map(|l| {
-                            serde_json::json!({
-                                "name": l.name,
-                                "scale": l.transform.scale,
-                                "offset": { "x": l.transform.offset.x.round(), "y": l.transform.offset.y.round() },
-                            })
-                        }).collect();
-                        let json_str = serde_json::to_string_pretty(&meta).unwrap();
-                        
-                        // Zip It
                         let mut zip_buffer = Vec::new();
                         {
                             let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
                             let options = zip::write::FileOptions::default()
                                 .compression_method(zip::CompressionMethod::Deflated);
-                                
-                            zip.start_file("merged.png", options).unwrap();
-                            zip.write_all(&png_bytes).unwrap();
+                            
+                            // 1. Export each visible layer as PNG
+                            for (i, layer) in app.layers.iter().enumerate() {
+                                if let Some(img) = render_single_layer(app.canvas_size, layer, app.export_scale) {
+                                    let mut bytes = Vec::new();
+                                    img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+                                    
+                                    let filename = format!("{}_{}.png", i, layer.name);
+                                    zip.start_file(filename, options).unwrap();
+                                    zip.write_all(&bytes).unwrap();
+                                }
+                            }
+                            
+                            // 2. Export Metadata
+                            let meta: Vec<serde_json::Value> = app.layers.iter().map(|l| {
+                                serde_json::json!({
+                                    "name": l.name,
+                                    "visible": l.visible,
+                                    "scale": l.transform.scale,
+                                    "offset": { "x": l.transform.offset.x.round(), "y": l.transform.offset.y.round() },
+                                })
+                            }).collect();
+                            let json_str = serde_json::to_string_pretty(&meta).unwrap();
                             
                             zip.start_file("data.json", options).unwrap();
                             zip.write_all(json_str.as_bytes()).unwrap();
@@ -388,7 +387,7 @@ impl eframe::App for KitbashApp {
                             zip.finish().unwrap();
                         }
                         
-                        trigger_download("character_pack.zip", &zip_buffer);
+                        trigger_download("kitbash_layers.zip", &zip_buffer);
                     }
                 });
             });
@@ -420,12 +419,6 @@ impl eframe::App for KitbashApp {
             if input.pointer.button_down(egui::PointerButton::Middle) {
                 self.canvas_pan += input.pointer.delta();
             }
-            // Optional: Mouse wheel zoom
-            /* 
-            if input.scroll_delta.y != 0.0 {
-                self.preview_zoom = (self.preview_zoom + input.scroll_delta.y * 0.001).clamp(0.1, 10.0);
-            }
-            */
 
             // Calculate Canvas Rect (Centered + Pan)
             let canvas_w = self.canvas_size[0] as f32 * self.preview_zoom;
