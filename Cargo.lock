@@ -1808,6 +1808,7 @@ dependencies = [
  "env_logger",
  "futures",
  "image",
+ "js-sys",
  "log",
  "rfd",
  "serde",

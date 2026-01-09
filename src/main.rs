@@ -9,34 +9,28 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 // Data Structures
 // ----------------------------------------------------------------------------
 
-struct Part {
-    id: u64,
-    name: String,
-    // The raw source image (kept in CPU memory for high-quality export)
-    source_image: image::DynamicImage,
-    // The texture for display in egui
-    texture: Option<egui::TextureHandle>,
-    
-    // Transform properties
-    offset: egui::Vec2, // Position on canvas
-    scale: f32,         // Uniform scale
-    
-    // Editor state
-    visible: bool,
+#[derive(Clone, Debug)]
+struct Transform {
+    offset: egui::Vec2,
+    scale: f32,
 }
 
-impl Part {
-    fn new(id: u64, name: String, image: image::DynamicImage) -> Self {
+impl Default for Transform {
+    fn default() -> Self {
         Self {
-            id,
-            name,
-            source_image: image,
-            texture: None, // Created on first frame or upload
             offset: egui::Vec2::ZERO,
             scale: 1.0,
-            visible: true,
         }
     }
+}
+
+struct LayerImage {
+    id: u64,
+    name: String,
+    source_image: image::DynamicImage,
+    texture: Option<egui::TextureHandle>,
+    transform: Transform,
+    visible: bool,
 }
 
 enum AppMessage {
@@ -47,10 +41,11 @@ struct KitbashApp {
     // Canvas Config
     canvas_size: [u32; 2],
     bg_color: egui::Color32,
+    export_scale: u32, // New: Export multiplier
     
     // State
-    parts: Vec<Part>,
-    selected_part_id: Option<u64>,
+    layers: Vec<LayerImage>, // Flat list again
+    selected_layer_id: Option<u64>,
     next_id: u64,
     
     // Async Communication
@@ -59,6 +54,7 @@ struct KitbashApp {
     
     // UI State
     preview_zoom: f32,
+    canvas_pan: egui::Vec2, // New: Canvas panning
 }
 
 impl Default for KitbashApp {
@@ -67,12 +63,14 @@ impl Default for KitbashApp {
         Self {
             canvas_size: [64, 64],
             bg_color: egui::Color32::TRANSPARENT,
-            parts: Vec::new(),
-            selected_part_id: None,
+            export_scale: 1,
+            layers: Vec::new(),
+            selected_layer_id: None,
             next_id: 0,
             msg_sender: sender,
             msg_receiver: receiver,
-            preview_zoom: 4.0, // Default zoom for visibility
+            preview_zoom: 4.0,
+            canvas_pan: egui::Vec2::ZERO,
         }
     }
 }
@@ -81,50 +79,49 @@ impl Default for KitbashApp {
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-/// Composite the final image based on current state
-fn composite_image(canvas_size: [u32; 2], bg_color: egui::Color32, parts: &[Part]) -> RgbaImage {
-    let mut buffer = RgbaImage::new(canvas_size[0], canvas_size[1]);
-    
-    // Fill background
-    for pixel in buffer.pixels_mut() {
-        *pixel = Rgba([bg_color.r(), bg_color.g(), bg_color.b(), bg_color.a()]);
+/// Render a single layer to a buffer (full canvas size)
+fn render_single_layer(
+    canvas_size: [u32; 2], 
+    layer: &LayerImage, 
+    export_scale: u32
+) -> Option<RgbaImage> {
+    if !layer.visible {
+        return None;
     }
 
-    for part in parts {
-        if !part.visible {
-            continue;
-        }
-
-        // 1. Resize source image using Nearest Neighbor
-        let src_width = part.source_image.width();
-        let src_height = part.source_image.height();
-        
-        let target_width = (src_width as f32 * part.scale).round() as u32;
-        let target_height = (src_height as f32 * part.scale).round() as u32;
-
-        if target_width == 0 || target_height == 0 {
-            continue;
-        }
-
-        let resized = part.source_image.resize_exact(
-            target_width, 
-            target_height, 
-            FilterType::Nearest
-        );
-
-        // 2. Calculate position
-        // offset is in pixels relative to top-left (0,0) of canvas
-        let x = part.offset.x as i64;
-        let y = part.offset.y as i64;
-
-        // 3. Overlay
-        image::imageops::overlay(&mut buffer, &resized, x, y);
-    }
+    let scale_f = export_scale as f32;
+    let width = canvas_size[0] * export_scale;
+    let height = canvas_size[1] * export_scale;
     
-    buffer
+    let mut buffer = RgbaImage::new(width, height);
+    // Note: Individual layers are transparent background by default
+    
+    let src_width = layer.source_image.width();
+    let src_height = layer.source_image.height();
+    
+    let final_scale = layer.transform.scale * scale_f;
+    
+    let target_width = (src_width as f32 * final_scale).round() as u32;
+    let target_height = (src_height as f32 * final_scale).round() as u32;
+
+    if target_width == 0 || target_height == 0 {
+        return Some(buffer);
+    }
+
+    let resized = layer.source_image.resize_exact(
+        target_width, 
+        target_height, 
+        FilterType::Nearest
+    );
+
+    let x = (layer.transform.offset.x * scale_f).round() as i64;
+    let y = (layer.transform.offset.y * scale_f).round() as i64;
+
+    image::imageops::overlay(&mut buffer, &resized, x, y);
+    
+    Some(buffer)
 }
 
-// Function to trigger download in browser
 #[cfg(target_arch = "wasm32")]
 fn trigger_download(filename: &str, data: &[u8]) {
     use wasm_bindgen::JsCast;
@@ -134,17 +131,15 @@ fn trigger_download(filename: &str, data: &[u8]) {
     let document = window.document().unwrap();
     let body = document.body().unwrap();
 
-    // Create Blob
     let array = js_sys::Uint8Array::from(data);
     let parts = js_sys::Array::new();
     parts.push(&array);
     
-    let mut props = BlobPropertyBag::new();
-    // Default to binary/octet-stream if unknown, or png/zip specific
+    let props = BlobPropertyBag::new();
     if filename.ends_with(".zip") {
-        props.type_("application/zip");
+        props.set_type("application/zip");
     } else {
-        props.type_("image/png");
+        props.set_type("image/png");
     }
     
     let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &props).unwrap();
@@ -164,7 +159,6 @@ fn trigger_download(filename: &str, data: &[u8]) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn trigger_download(filename: &str, data: &[u8]) {
-    // Fallback for local run (just save to disk)
     if let Ok(mut file) = std::fs::File::create(filename) {
         let _ = file.write_all(data);
         println!("Saved to {}", filename);
@@ -184,9 +178,15 @@ impl eframe::App for KitbashApp {
                     if let Ok(img) = image::load_from_memory(&bytes) {
                         let id = self.next_id;
                         self.next_id += 1;
-                        let part = Part::new(id, name, img);
-                        self.parts.push(part);
-                        self.selected_part_id = Some(id);
+                        let layer = LayerImage {
+                            id,
+                            name,
+                            source_image: img,
+                            texture: None,
+                            transform: Transform::default(),
+                            visible: true,
+                        };
+                        self.layers.push(layer);
                     } else {
                         eprintln!("Failed to decode image: {}", name);
                     }
@@ -197,7 +197,7 @@ impl eframe::App for KitbashApp {
         let is_mobile = ctx.screen_rect().width() < 600.0;
 
         // --------------------------------------------------------------------
-        // Layout Definition
+        // UI Components
         // --------------------------------------------------------------------
         
         let control_panel_ui = |ui: &mut egui::Ui, app: &mut KitbashApp| {
@@ -208,9 +208,9 @@ impl eframe::App for KitbashApp {
                 // Canvas Settings
                 ui.collapsing("Canvas Setup", |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Width:");
+                        ui.label("Base W:");
                         ui.add(egui::DragValue::new(&mut app.canvas_size[0]).range(16..=1024));
-                        ui.label("Height:");
+                        ui.label("Base H:");
                         ui.add(egui::DragValue::new(&mut app.canvas_size[1]).range(16..=1024));
                     });
                     ui.horizontal(|ui| {
@@ -218,143 +218,168 @@ impl eframe::App for KitbashApp {
                         ui.color_edit_button_srgba(&mut app.bg_color);
                     });
                     ui.horizontal(|ui| {
-                        ui.label("Preview Zoom:");
+                        ui.label("View Zoom:");
                         ui.add(egui::Slider::new(&mut app.preview_zoom, 0.5..=10.0));
                     });
+                    
+                    if ui.button("Reset View").clicked() {
+                        app.canvas_pan = egui::Vec2::ZERO;
+                        app.preview_zoom = 4.0;
+                    }
                 });
 
                 ui.separator();
                 
                 // Asset Pipeline
-                ui.heading("Assets");
-                if ui.button("Import Image (RFD)").clicked() {
+                ui.heading("Layers");
+                if ui.button("Import Images (Batch)...").clicked() {
                     let sender = app.msg_sender.clone();
                     let task = async move {
-                        if let Some(handle) = rfd::AsyncFileDialog::new()
+                        if let Some(handles) = rfd::AsyncFileDialog::new()
                             .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
-                            .pick_file()
+                            .pick_files()
                             .await 
                         {
-                            let data = handle.read().await;
-                            let name = handle.file_name();
-                            let _ = sender.send(AppMessage::ImageLoaded(name, data));
+                            for handle in handles {
+                                let data = handle.read().await;
+                                let name = handle.file_name();
+                                let _ = sender.send(AppMessage::ImageLoaded(name, data));
+                            }
                         }
                     };
                     
                     #[cfg(target_arch = "wasm32")]
                     wasm_bindgen_futures::spawn_local(task);
                     #[cfg(not(target_arch = "wasm32"))]
-                    {
-                         // For native testing simple block
-                        std::thread::spawn(move || {
-                            futures::executor::block_on(task);
-                        });
-                    }
+                    std::thread::spawn(move || { futures::executor::block_on(task); });
                 }
 
-                // Part List
                 ui.separator();
-                ui.label("Parts (Drag to Reorder):");
                 
-                // Simple list with reordering and selection
-                let mut to_move = None; // (from, to)
-                let mut to_delete = None;
+                // Layer List (Reorderable)
+                let mut move_op = None;
+                let mut delete_op = None;
+                let layers_len = app.layers.len();
                 
-                let list_len = app.parts.len();
-                for (idx, part) in app.parts.iter_mut().enumerate() {
+                for (idx, layer) in app.layers.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
-                        // Selection
-                        let is_selected = Some(part.id) == app.selected_part_id;
-                        if ui.selectable_label(is_selected, &part.name).clicked() {
-                            app.selected_part_id = Some(part.id);
+                        let is_selected = Some(layer.id) == app.selected_layer_id;
+                        if ui.selectable_label(is_selected, &layer.name).clicked() {
+                            app.selected_layer_id = Some(layer.id);
                         }
                         
-                        // Visibility toggle
-                        ui.checkbox(&mut part.visible, "");
-
-                        // Up/Down buttons for Z-Index (Rendering Order)
+                        ui.checkbox(&mut layer.visible, "");
+                        
                         if ui.button("⬆").clicked() && idx > 0 {
-                            to_move = Some((idx, idx - 1));
+                            move_op = Some((idx, idx - 1));
                         }
-                        if ui.button("⬇").clicked() && idx < list_len - 1 {
-                             to_move = Some((idx, idx + 1));
+                        if ui.button("⬇").clicked() && idx < layers_len - 1 {
+                            move_op = Some((idx, idx + 1));
                         }
-                        
                         if ui.button("X").clicked() {
-                            to_delete = Some(idx);
+                            delete_op = Some(idx);
                         }
                     });
                 }
-
-                if let Some((from, to)) = to_move {
-                    app.parts.swap(from, to);
+                
+                if let Some((from, to)) = move_op {
+                    app.layers.swap(from, to);
                 }
-                if let Some(idx) = to_delete {
-                    app.parts.remove(idx);
-                    app.selected_part_id = None;
+                if let Some(idx) = delete_op {
+                    let id = app.layers[idx].id;
+                    app.layers.remove(idx);
+                    if app.selected_layer_id == Some(id) {
+                        app.selected_layer_id = None;
+                    }
                 }
 
                 ui.separator();
                 
                 // Properties Panel
-                if let Some(selected_id) = app.selected_part_id {
-                    if let Some(part) = app.parts.iter_mut().find(|p| p.id == selected_id) {
-                        ui.heading(format!("Properties: {}", part.name));
+                if let Some(selected_id) = app.selected_layer_id {
+                    if let Some(layer) = app.layers.iter_mut().find(|l| l.id == selected_id) {
+                        ui.heading(format!("Properties: {}", layer.name));
+                        
                         ui.horizontal(|ui| {
                             ui.label("Scale:");
-                            ui.add(egui::Slider::new(&mut part.scale, 0.1..=5.0));
+                            ui.add(egui::Slider::new(&mut layer.transform.scale, 0.1..=5.0));
                         });
                         ui.horizontal(|ui| {
                             ui.label("Offset:");
-                            ui.add(egui::DragValue::new(&mut part.offset.x).speed(1.0).prefix("X: "));
-                            ui.add(egui::DragValue::new(&mut part.offset.y).speed(1.0).prefix("Y: "));
+                            ui.add(egui::DragValue::new(&mut layer.transform.offset.x).speed(1.0).prefix("X: "));
+                            ui.add(egui::DragValue::new(&mut layer.transform.offset.y).speed(1.0).prefix("Y: "));
                         });
-                        if ui.button("Reset Transform").clicked() {
-                            part.scale = 1.0;
-                            part.offset = egui::Vec2::ZERO;
+                        
+                        if ui.button("Snap to Pixel").clicked() {
+                            layer.transform.offset.x = layer.transform.offset.x.round();
+                            layer.transform.offset.y = layer.transform.offset.y.round();
+                        }
+                        
+                        if ui.button("Reset").clicked() {
+                            layer.transform.scale = 1.0;
+                            layer.transform.offset = egui::Vec2::ZERO;
                         }
                     }
                 } else {
-                    ui.label("Select a part to edit properties.");
+                    ui.label("Select a layer to edit.");
                 }
                 
                 ui.separator();
                 
                 // Export System
-                ui.heading("Export");
+                ui.heading("Export (Scattered)");
                 ui.horizontal(|ui| {
-                    if ui.button("Download PNG").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &app.parts);
-                        let mut bytes: Vec<u8> = Vec::new();
-                        img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
-                        trigger_download("character.png", &bytes);
+                    ui.label("Export Scale:");
+                    ui.add(egui::DragValue::new(&mut app.export_scale).range(1..=10).speed(0.1));
+                });
+                
+                let current_res = format!("{} x {}", 
+                    app.canvas_size[0] * app.export_scale, 
+                    app.canvas_size[1] * app.export_scale
+                );
+                ui.label(format!("Output Res: {}", current_res));
+
+                ui.horizontal(|ui| {
+                    if ui.button("Download Individual PNGs").clicked() {
+                        for (i, layer) in app.layers.iter().enumerate() {
+                            if let Some(img) = render_single_layer(app.canvas_size, layer, app.export_scale) {
+                                let mut bytes: Vec<u8> = Vec::new();
+                                img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+                                let filename = format!("{}_{}.png", i, layer.name);
+                                trigger_download(&filename, &bytes);
+                            }
+                        }
                     }
                     
                     if ui.button("Download ZIP").clicked() {
-                        let img = composite_image(app.canvas_size, app.bg_color, &app.parts);
-                        let mut png_bytes: Vec<u8> = Vec::new();
-                        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png).unwrap();
-                        
-                        // Generate Metadata
-                        let meta: Vec<serde_json::Value> = app.parts.iter().map(|p| {
-                            serde_json::json!({
-                                "name": p.name,
-                                "scale": p.scale,
-                                "offset": { "x": p.offset.x, "y": p.offset.y },
-                                "z_index": 0 // Order in list implies z-index
-                            })
-                        }).collect();
-                        let json_str = serde_json::to_string_pretty(&meta).unwrap();
-                        
-                        // Zip It
                         let mut zip_buffer = Vec::new();
                         {
                             let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
                             let options = zip::write::FileOptions::default()
                                 .compression_method(zip::CompressionMethod::Deflated);
-                                
-                            zip.start_file("merged.png", options).unwrap();
-                            zip.write_all(&png_bytes).unwrap();
+                            
+                            // 1. Export each visible layer as PNG
+                            for (i, layer) in app.layers.iter().enumerate() {
+                                if let Some(img) = render_single_layer(app.canvas_size, layer, app.export_scale) {
+                                    let mut bytes = Vec::new();
+                                    img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+                                    
+                                    let filename = format!("{}_{}.png", i, layer.name);
+                                    zip.start_file(filename, options).unwrap();
+                                    zip.write_all(&bytes).unwrap();
+                                }
+                            }
+                            
+                            // 2. Export Metadata
+                            let meta: Vec<serde_json::Value> = app.layers.iter().map(|l| {
+                                serde_json::json!({
+                                    "name": l.name,
+                                    "visible": l.visible,
+                                    "scale": l.transform.scale,
+                                    "offset": { "x": l.transform.offset.x.round(), "y": l.transform.offset.y.round() },
+                                })
+                            }).collect();
+                            let json_str = serde_json::to_string_pretty(&meta).unwrap();
                             
                             zip.start_file("data.json", options).unwrap();
                             zip.write_all(json_str.as_bytes()).unwrap();
@@ -362,7 +387,7 @@ impl eframe::App for KitbashApp {
                             zip.finish().unwrap();
                         }
                         
-                        trigger_download("character_pack.zip", &zip_buffer);
+                        trigger_download("kitbash_layers.zip", &zip_buffer);
                     }
                 });
             });
@@ -383,20 +408,27 @@ impl eframe::App for KitbashApp {
 
         // Central Canvas Area
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Draw checkerboard background
+            let available_rect = ui.available_rect_before_wrap();
+            let painter = ui.painter_at(available_rect);
+
+            // Handle Canvas Panning (Middle Mouse or Alt+Drag or Space+Drag logic)
+            // Or just drag on empty space.
+            let input = ui.input(|i| i.clone());
+            
+            // Allow panning if middle mouse is dragging
+            if input.pointer.button_down(egui::PointerButton::Middle) {
+                self.canvas_pan += input.pointer.delta();
+            }
+
+            // Calculate Canvas Rect (Centered + Pan)
             let canvas_w = self.canvas_size[0] as f32 * self.preview_zoom;
             let canvas_h = self.canvas_size[1] as f32 * self.preview_zoom;
             
-            // Center the canvas in the available rect
-            let available_rect = ui.available_rect_before_wrap();
-            let canvas_rect = egui::Rect::from_center_size(
-                available_rect.center(),
-                egui::vec2(canvas_w, canvas_h)
-            );
+            let center = available_rect.center() + self.canvas_pan;
+            let canvas_rect = egui::Rect::from_center_size(center, egui::vec2(canvas_w, canvas_h));
 
             // Draw Background (Checkerboard)
-            let painter = ui.painter_at(canvas_rect);
-            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(50)); // Dark base
+            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(50));
 
             let check_size = 8.0 * self.preview_zoom;
             let cols = (self.canvas_size[0] as f32 / 8.0).ceil() as u32;
@@ -413,77 +445,63 @@ impl eframe::App for KitbashApp {
                              egui::vec2(check_size, check_size)
                          ).intersect(canvas_rect);
                          
-                         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
+                         if rect.is_positive() {
+                             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
+                         }
                     }
                 }
             }
             
-            // Draw User Background Color
             if self.bg_color != egui::Color32::TRANSPARENT {
                 painter.rect_filled(canvas_rect, 0.0, self.bg_color);
             }
 
-            // Draw Parts
-            // We need to iterate again to update textures if needed
-            for part in &mut self.parts {
-                if !part.visible { continue; }
-                
-                // Ensure texture exists
-                let texture_id = if let Some(tex) = &part.texture {
+            // Draw Layers
+            let mut drag_delta = egui::Vec2::ZERO;
+            let mut dragged_id = None;
+
+            for layer in &mut self.layers {
+                if !layer.visible { continue; }
+
+                let texture_id = if let Some(tex) = &layer.texture {
                     tex.id()
                 } else {
                     let tex = ctx.load_texture(
-                        &part.name,
+                        &layer.name,
                         egui::ColorImage::from_rgba_unmultiplied(
-                            [part.source_image.width() as _, part.source_image.height() as _],
-                            part.source_image.to_rgba8().as_flat_samples().as_slice(),
+                            [layer.source_image.width() as _, layer.source_image.height() as _],
+                            layer.source_image.to_rgba8().as_flat_samples().as_slice(),
                         ),
-                        egui::TextureOptions::NEAREST, // CRITICAL: Nearest Neighbor for preview
+                        egui::TextureOptions::NEAREST,
                     );
                     let id = tex.id();
-                    part.texture = Some(tex);
+                    layer.texture = Some(tex);
                     id
                 };
 
-                // Calculate display rect
-                // Part Offset is in "Canvas Pixels".
-                // Screen Position = CanvasTopLeft + (PartOffset * Zoom)
-                let part_screen_pos = canvas_rect.min + (part.offset * self.preview_zoom);
-                let part_w = part.source_image.width() as f32 * part.scale * self.preview_zoom;
-                let part_h = part.source_image.height() as f32 * part.scale * self.preview_zoom;
+                let aligned_pos = egui::pos2(layer.transform.offset.x.round(), layer.transform.offset.y.round());
+                let part_screen_pos = canvas_rect.min + (aligned_pos.to_vec2() * self.preview_zoom);
+                let part_w = layer.source_image.width() as f32 * layer.transform.scale * self.preview_zoom;
+                let part_h = layer.source_image.height() as f32 * layer.transform.scale * self.preview_zoom;
                 
                 let part_rect = egui::Rect::from_min_size(part_screen_pos, egui::vec2(part_w, part_h));
 
-                // Interaction: Dragging
-                // We create an invisible "Sense" rect over the part to handle dragging.
-                // However, we must be careful with Z-Index. egui paints back-to-front.
-                // To handle selection properly, we might need a separate loop or transparent widgets.
-                // Simplest way: ui.put a transparent ImageButton or Area.
-                
-                // Let's use `ui.allocate_rect` to get interaction, then paint.
-                // Problem: allocate_rect consumes space in the layout if not careful? 
-                // No, we are in a Manual Layout (Painter). But we can still interact.
-                
-                let interact_response = ui.interact(part_rect, egui::Id::new(part.id), egui::Sense::drag());
+                // Interaction
+                let interact_response = ui.interact(part_rect, egui::Id::new(layer.id), egui::Sense::drag());
                 
                 if interact_response.dragged() {
-                    // Update offset
-                    // Delta is in screen pixels. Need to convert to Canvas Pixels.
-                    let delta = interact_response.drag_delta() / self.preview_zoom;
-                    part.offset += delta;
-                    self.selected_part_id = Some(part.id);
+                    dragged_id = Some(layer.id);
+                    drag_delta = interact_response.drag_delta() / self.preview_zoom;
+                    self.selected_layer_id = Some(layer.id);
                 }
-                
                 if interact_response.clicked() {
-                    self.selected_part_id = Some(part.id);
+                    self.selected_layer_id = Some(layer.id);
                 }
 
-                // Visual Highlight for Selection
-                if Some(part.id) == self.selected_part_id {
+                if Some(layer.id) == self.selected_layer_id {
                     painter.rect_stroke(part_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::YELLOW));
                 }
 
-                // Paint the Texture
                 let mut mesh = egui::Mesh::with_texture(texture_id);
                 mesh.add_rect_with_uv(
                     part_rect, 
@@ -492,8 +510,13 @@ impl eframe::App for KitbashApp {
                 );
                 painter.add(mesh);
             }
+
+            if let Some(id) = dragged_id {
+                if let Some(layer) = self.layers.iter_mut().find(|l| l.id == id) {
+                    layer.transform.offset += drag_delta;
+                }
+            }
             
-            // Canvas Border
             painter.rect_stroke(canvas_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
         });
     }
@@ -521,15 +544,24 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use wasm_bindgen::JsCast;
+
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
+        let document = web_sys::window().expect("No window found").document().expect("No document found");
+        let canvas = document
+            .get_element_by_id("the_canvas_id")
+            .expect("No element with id the_canvas_id found")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("Element is not a canvas");
+
         eframe::WebRunner::new()
             .start(
-                "the_canvas_id", // hardcoded in index.html usually
+                canvas,
                 web_options,
                 Box::new(|_cc| Ok(Box::new(KitbashApp::default()))),
             )
