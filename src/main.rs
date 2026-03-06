@@ -42,16 +42,16 @@ struct KitbashApp {
     canvas_size: [u32; 2],
     bg_color: egui::Color32,
     export_scale: u32, // New: Export multiplier
-    
+
     // State
     layers: Vec<LayerImage>, // Flat list again
     selected_layer_id: Option<u64>,
     next_id: u64,
-    
+
     // Async Communication
     msg_sender: Sender<AppMessage>,
     msg_receiver: Receiver<AppMessage>,
-    
+
     // UI State
     preview_zoom: f32,
     canvas_pan: egui::Vec2, // New: Canvas panning
@@ -81,9 +81,9 @@ impl Default for KitbashApp {
 
 /// Render a single layer to a buffer (full canvas size)
 fn render_single_layer(
-    canvas_size: [u32; 2], 
-    layer: &LayerImage, 
-    export_scale: u32
+    canvas_size: [u32; 2],
+    layer: &LayerImage,
+    export_scale: u32,
 ) -> Option<RgbaImage> {
     if !layer.visible {
         return None;
@@ -92,15 +92,15 @@ fn render_single_layer(
     let scale_f = export_scale as f32;
     let width = canvas_size[0] * export_scale;
     let height = canvas_size[1] * export_scale;
-    
+
     let mut buffer = RgbaImage::new(width, height);
     // Note: Individual layers are transparent background by default
-    
+
     let src_width = layer.source_image.width();
     let src_height = layer.source_image.height();
-    
+
     let final_scale = layer.transform.scale * scale_f;
-    
+
     let target_width = (src_width as f32 * final_scale).round() as u32;
     let target_height = (src_height as f32 * final_scale).round() as u32;
 
@@ -108,24 +108,22 @@ fn render_single_layer(
         return Some(buffer);
     }
 
-    let resized = layer.source_image.resize_exact(
-        target_width, 
-        target_height, 
-        FilterType::Nearest
-    );
+    let resized = layer
+        .source_image
+        .resize_exact(target_width, target_height, FilterType::Nearest);
 
     let x = (layer.transform.offset.x * scale_f).round() as i64;
     let y = (layer.transform.offset.y * scale_f).round() as i64;
 
     image::imageops::overlay(&mut buffer, &resized, x, y);
-    
+
     Some(buffer)
 }
 
 #[cfg(target_arch = "wasm32")]
 fn trigger_download(filename: &str, data: &[u8]) {
     use wasm_bindgen::JsCast;
-    use web_sys::{Blob, BlobPropertyBag, Url, HtmlAnchorElement};
+    use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
@@ -134,14 +132,14 @@ fn trigger_download(filename: &str, data: &[u8]) {
     let array = js_sys::Uint8Array::from(data);
     let parts = js_sys::Array::new();
     parts.push(&array);
-    
+
     let props = BlobPropertyBag::new();
     if filename.ends_with(".zip") {
         props.set_type("application/zip");
     } else {
         props.set_type("image/png");
     }
-    
+
     let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &props).unwrap();
     let url = Url::create_object_url_with_blob(&blob).unwrap();
 
@@ -150,7 +148,7 @@ fn trigger_download(filename: &str, data: &[u8]) {
     link.set_href(&url);
     link.set_download(filename);
     link.style().set_property("display", "none").unwrap();
-    
+
     body.append_child(&link).unwrap();
     link.click();
     body.remove_child(&link).unwrap();
@@ -199,7 +197,7 @@ impl eframe::App for KitbashApp {
         // --------------------------------------------------------------------
         // UI Components
         // --------------------------------------------------------------------
-        
+
         let control_panel_ui = |ui: &mut egui::Ui, app: &mut KitbashApp| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Kitbash Config");
@@ -221,7 +219,7 @@ impl eframe::App for KitbashApp {
                         ui.label("View Zoom:");
                         ui.add(egui::Slider::new(&mut app.preview_zoom, 0.5..=10.0));
                     });
-                    
+
                     if ui.button("Reset View").clicked() {
                         app.canvas_pan = egui::Vec2::ZERO;
                         app.preview_zoom = 4.0;
@@ -229,7 +227,7 @@ impl eframe::App for KitbashApp {
                 });
 
                 ui.separator();
-                
+
                 // Asset Pipeline
                 ui.heading("Layers");
                 if ui.button("Import Images (Batch)...").clicked() {
@@ -238,7 +236,7 @@ impl eframe::App for KitbashApp {
                         if let Some(handles) = rfd::AsyncFileDialog::new()
                             .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
                             .pick_files()
-                            .await 
+                            .await
                         {
                             for handle in handles {
                                 let data = handle.read().await;
@@ -247,7 +245,7 @@ impl eframe::App for KitbashApp {
                             }
                         }
                     };
-                    
+
                     #[cfg(target_arch = "wasm32")]
                     wasm_bindgen_futures::spawn_local(task);
                     #[cfg(not(target_arch = "wasm32"))]
@@ -255,21 +253,21 @@ impl eframe::App for KitbashApp {
                 }
 
                 ui.separator();
-                
+
                 // Layer List (Reorderable)
                 let mut move_op = None;
                 let mut delete_op = None;
                 let layers_len = app.layers.len();
-                
+
                 for (idx, layer) in app.layers.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         let is_selected = Some(layer.id) == app.selected_layer_id;
                         if ui.selectable_label(is_selected, &layer.name).clicked() {
                             app.selected_layer_id = Some(layer.id);
                         }
-                        
+
                         ui.checkbox(&mut layer.visible, "");
-                        
+
                         if ui.button("⬆").clicked() && idx > 0 {
                             move_op = Some((idx, idx - 1));
                         }
@@ -281,7 +279,7 @@ impl eframe::App for KitbashApp {
                         }
                     });
                 }
-                
+
                 if let Some((from, to)) = move_op {
                     app.layers.swap(from, to);
                 }
@@ -294,12 +292,12 @@ impl eframe::App for KitbashApp {
                 }
 
                 ui.separator();
-                
+
                 // Properties Panel
                 if let Some(selected_id) = app.selected_layer_id {
                     if let Some(layer) = app.layers.iter_mut().find(|l| l.id == selected_id) {
                         ui.heading(format!("Properties: {}", layer.name));
-                        
+
                         ui.horizontal(|ui| {
                             ui.label("Scale:");
                             ui.add(egui::Slider::new(&mut layer.transform.scale, 0.1..=5.0));
@@ -309,12 +307,12 @@ impl eframe::App for KitbashApp {
                             ui.add(egui::DragValue::new(&mut layer.transform.offset.x).speed(1.0).prefix("X: "));
                             ui.add(egui::DragValue::new(&mut layer.transform.offset.y).speed(1.0).prefix("Y: "));
                         });
-                        
+
                         if ui.button("Snap to Pixel").clicked() {
                             layer.transform.offset.x = layer.transform.offset.x.round();
                             layer.transform.offset.y = layer.transform.offset.y.round();
                         }
-                        
+
                         if ui.button("Reset").clicked() {
                             layer.transform.scale = 1.0;
                             layer.transform.offset = egui::Vec2::ZERO;
@@ -323,18 +321,18 @@ impl eframe::App for KitbashApp {
                 } else {
                     ui.label("Select a layer to edit.");
                 }
-                
+
                 ui.separator();
-                
+
                 // Export System
                 ui.heading("Export (Scattered)");
                 ui.horizontal(|ui| {
                     ui.label("Export Scale:");
                     ui.add(egui::DragValue::new(&mut app.export_scale).range(1..=10).speed(0.1));
                 });
-                
-                let current_res = format!("{} x {}", 
-                    app.canvas_size[0] * app.export_scale, 
+
+                let current_res = format!("{} x {}",
+                    app.canvas_size[0] * app.export_scale,
                     app.canvas_size[1] * app.export_scale
                 );
                 ui.label(format!("Output Res: {}", current_res));
@@ -350,26 +348,26 @@ impl eframe::App for KitbashApp {
                             }
                         }
                     }
-                    
+
                     if ui.button("Download ZIP").clicked() {
                         let mut zip_buffer = Vec::new();
                         {
                             let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
                             let options = zip::write::FileOptions::default()
                                 .compression_method(zip::CompressionMethod::Deflated);
-                            
+
                             // 1. Export each visible layer as PNG
                             for (i, layer) in app.layers.iter().enumerate() {
                                 if let Some(img) = render_single_layer(app.canvas_size, layer, app.export_scale) {
                                     let mut bytes = Vec::new();
                                     img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
-                                    
+
                                     let filename = format!("{}_{}.png", i, layer.name);
                                     zip.start_file(filename, options).unwrap();
                                     zip.write_all(&bytes).unwrap();
                                 }
                             }
-                            
+
                             // 2. Export Metadata
                             let meta: Vec<serde_json::Value> = app.layers.iter().map(|l| {
                                 serde_json::json!({
@@ -380,13 +378,13 @@ impl eframe::App for KitbashApp {
                                 })
                             }).collect();
                             let json_str = serde_json::to_string_pretty(&meta).unwrap();
-                            
+
                             zip.start_file("data.json", options).unwrap();
                             zip.write_all(json_str.as_bytes()).unwrap();
-                            
+
                             zip.finish().unwrap();
                         }
-                        
+
                         trigger_download("kitbash_layers.zip", &zip_buffer);
                     }
                 });
@@ -414,7 +412,7 @@ impl eframe::App for KitbashApp {
             // Handle Canvas Panning (Middle Mouse or Alt+Drag or Space+Drag logic)
             // Or just drag on empty space.
             let input = ui.input(|i| i.clone());
-            
+
             // Allow panning if middle mouse is dragging
             if input.pointer.button_down(egui::PointerButton::Middle) {
                 self.canvas_pan += input.pointer.delta();
@@ -423,7 +421,7 @@ impl eframe::App for KitbashApp {
             // Calculate Canvas Rect (Centered + Pan)
             let canvas_w = self.canvas_size[0] as f32 * self.preview_zoom;
             let canvas_h = self.canvas_size[1] as f32 * self.preview_zoom;
-            
+
             let center = available_rect.center() + self.canvas_pan;
             let canvas_rect = egui::Rect::from_center_size(center, egui::vec2(canvas_w, canvas_h));
 
@@ -437,21 +435,22 @@ impl eframe::App for KitbashApp {
             for r in 0..rows {
                 for c in 0..cols {
                     if (r + c) % 2 == 0 {
-                         let x = canvas_rect.min.x + c as f32 * check_size;
-                         let y = canvas_rect.min.y + r as f32 * check_size;
-                         // Clip to canvas size
-                         let rect = egui::Rect::from_min_size(
-                             egui::pos2(x, y), 
-                             egui::vec2(check_size, check_size)
-                         ).intersect(canvas_rect);
-                         
-                         if rect.is_positive() {
-                             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
-                         }
+                        let x = canvas_rect.min.x + c as f32 * check_size;
+                        let y = canvas_rect.min.y + r as f32 * check_size;
+                        // Clip to canvas size
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(x, y),
+                            egui::vec2(check_size, check_size),
+                        )
+                        .intersect(canvas_rect);
+
+                        if rect.is_positive() {
+                            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(100));
+                        }
                     }
                 }
             }
-            
+
             if self.bg_color != egui::Color32::TRANSPARENT {
                 painter.rect_filled(canvas_rect, 0.0, self.bg_color);
             }
@@ -461,7 +460,9 @@ impl eframe::App for KitbashApp {
             let mut dragged_id = None;
 
             for layer in &mut self.layers {
-                if !layer.visible { continue; }
+                if !layer.visible {
+                    continue;
+                }
 
                 let texture_id = if let Some(tex) = &layer.texture {
                     tex.id()
@@ -469,7 +470,10 @@ impl eframe::App for KitbashApp {
                     let tex = ctx.load_texture(
                         &layer.name,
                         egui::ColorImage::from_rgba_unmultiplied(
-                            [layer.source_image.width() as _, layer.source_image.height() as _],
+                            [
+                                layer.source_image.width() as _,
+                                layer.source_image.height() as _,
+                            ],
                             layer.source_image.to_rgba8().as_flat_samples().as_slice(),
                         ),
                         egui::TextureOptions::NEAREST,
@@ -479,16 +483,23 @@ impl eframe::App for KitbashApp {
                     id
                 };
 
-                let aligned_pos = egui::pos2(layer.transform.offset.x.round(), layer.transform.offset.y.round());
+                let aligned_pos = egui::pos2(
+                    layer.transform.offset.x.round(),
+                    layer.transform.offset.y.round(),
+                );
                 let part_screen_pos = canvas_rect.min + (aligned_pos.to_vec2() * self.preview_zoom);
-                let part_w = layer.source_image.width() as f32 * layer.transform.scale * self.preview_zoom;
-                let part_h = layer.source_image.height() as f32 * layer.transform.scale * self.preview_zoom;
-                
-                let part_rect = egui::Rect::from_min_size(part_screen_pos, egui::vec2(part_w, part_h));
+                let part_w =
+                    layer.source_image.width() as f32 * layer.transform.scale * self.preview_zoom;
+                let part_h =
+                    layer.source_image.height() as f32 * layer.transform.scale * self.preview_zoom;
+
+                let part_rect =
+                    egui::Rect::from_min_size(part_screen_pos, egui::vec2(part_w, part_h));
 
                 // Interaction
-                let interact_response = ui.interact(part_rect, egui::Id::new(layer.id), egui::Sense::drag());
-                
+                let interact_response =
+                    ui.interact(part_rect, egui::Id::new(layer.id), egui::Sense::drag());
+
                 if interact_response.dragged() {
                     dragged_id = Some(layer.id);
                     drag_delta = interact_response.drag_delta() / self.preview_zoom;
@@ -499,14 +510,18 @@ impl eframe::App for KitbashApp {
                 }
 
                 if Some(layer.id) == self.selected_layer_id {
-                    painter.rect_stroke(part_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::YELLOW));
+                    painter.rect_stroke(
+                        part_rect,
+                        0.0,
+                        egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                    );
                 }
 
                 let mut mesh = egui::Mesh::with_texture(texture_id);
                 mesh.add_rect_with_uv(
-                    part_rect, 
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), 
-                    egui::Color32::WHITE
+                    part_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
                 );
                 painter.add(mesh);
             }
@@ -516,8 +531,12 @@ impl eframe::App for KitbashApp {
                     layer.transform.offset += drag_delta;
                 }
             }
-            
-            painter.rect_stroke(canvas_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+
+            painter.rect_stroke(
+                canvas_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
         });
     }
 }
@@ -552,7 +571,10 @@ fn main() {
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window().expect("No window found").document().expect("No document found");
+        let document = web_sys::window()
+            .expect("No window found")
+            .document()
+            .expect("No document found");
         let canvas = document
             .get_element_by_id("the_canvas_id")
             .expect("No element with id the_canvas_id found")

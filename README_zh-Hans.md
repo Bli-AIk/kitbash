@@ -1,6 +1,6 @@
 # Kitbash
 
-[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Aik2/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Aik2/kitbash.svg"/> <br>
+[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" />
 
 > 当前状态: 🚧 早期开发中 (Early Development)
@@ -9,7 +9,7 @@
 
 | English         | Simplified Chinese                 |
 |-----------------|---------------------------------|
-| [English](./README.md) | [简体中文](./README_zh-CN.md) |
+| [English](./README.md) | 简体中文 |
 
 ## 简介
 
@@ -44,7 +44,7 @@
 
 2.  **克隆仓库**:
     ```bash
-    git clone https://github.com/Aik2/kitbash.git
+    git clone https://github.com/Bli-AIk/kitbash.git
     cd kitbash
     ```
 
@@ -81,7 +81,7 @@
 
 1.  **克隆仓库**:
     ```bash
-    git clone https://github.com/Aik2/kitbash.git
+    git clone https://github.com/Bli-AIk/kitbash.git
     cd kitbash
     ```
 
