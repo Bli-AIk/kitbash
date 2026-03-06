@@ -8,7 +8,7 @@ pub fn draw_preview(ui: &mut egui::Ui, app: &mut KitbashApp) {
     let available_rect = ui.available_rect_before_wrap();
     let painter = ui.painter_at(available_rect);
 
-    handle_preview_input(ui, app);
+    handle_preview_input(ui, app, available_rect);
 
     let canvas_size = resolve_canvas_size(app);
 
@@ -115,29 +115,38 @@ fn resolve_canvas_size(app: &KitbashApp) -> [u32; 2] {
     }
 }
 
-fn handle_preview_input(ui: &egui::Ui, app: &mut KitbashApp) {
+fn handle_preview_input(ui: &egui::Ui, app: &mut KitbashApp, panel_rect: egui::Rect) {
     let response = ui.interact(
         ui.available_rect_before_wrap(),
         egui::Id::new("preview_interaction"),
-        egui::Sense::hover(),
+        egui::Sense::click_and_drag(),
     );
+
+    // Middle-mouse drag to pan
+    if response.dragged_by(egui::PointerButton::Middle) {
+        app.canvas_pan += response.drag_delta();
+    }
+
     if !response.hovered() {
         return;
     }
-    let input = ui.input(|i| {
-        (
-            i.pointer.button_down(egui::PointerButton::Middle),
-            i.pointer.delta(),
-            i.smooth_scroll_delta.y,
-        )
-    });
-    if input.0 {
-        app.canvas_pan += input.1;
-    }
-    // Scroll wheel zoom
-    if input.2 != 0.0 {
-        let factor = if input.2 > 0.0 { 1.1 } else { 1.0 / 1.1 };
-        app.preview_zoom = (app.preview_zoom * factor).clamp(0.1, 64.0);
+
+    // Smooth exponential scroll-wheel zoom, centered on cursor
+    let (scroll_delta, cursor_pos) = ui.input(|i| (i.smooth_scroll_delta.y, i.pointer.hover_pos()));
+    if scroll_delta != 0.0 {
+        let zoom_speed = 0.005;
+        let factor = (scroll_delta * zoom_speed).exp();
+        let old_zoom = app.preview_zoom;
+        let new_zoom = (old_zoom * factor).clamp(0.1, 64.0);
+
+        // Adjust pan so the point under the cursor stays fixed
+        if let Some(cursor) = cursor_pos {
+            let center = panel_rect.center() + app.canvas_pan;
+            let offset = cursor - center;
+            app.canvas_pan -= offset * (new_zoom / old_zoom - 1.0);
+        }
+
+        app.preview_zoom = new_zoom;
     }
 }
 
