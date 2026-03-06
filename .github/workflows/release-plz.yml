@@ -34,7 +34,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install trunk
-        uses: jetli/trunk-action@v0.4.0
+        uses: jetli/trunk-action@v0.5.1
 
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -79,7 +79,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install trunk
-        uses: jetli/trunk-action@v0.4.0
+        uses: jetli/trunk-action@v0.5.1
 
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
