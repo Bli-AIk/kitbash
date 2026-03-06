@@ -31,7 +31,7 @@ jobs:
         uses: jetli/trunk-action@v0.5.1
         
       - name: Build
-        run: trunk build --release
+        run: trunk build --release --public-url /kitbash
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
