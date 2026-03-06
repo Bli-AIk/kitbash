@@ -26,7 +26,8 @@ struct PanelMeta {
 /// Where a panel should be placed in the default layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelSlot {
-    Right,
+    RightTop,
+    RightBottom,
     Bottom,
     Center,
 }
@@ -55,11 +56,44 @@ impl Default for TileLayoutState {
 /// All panels in the editor, with their string IDs, display titles, and slots.
 const PANEL_DEFS: &[(&str, &str, PanelSlot)] = &[
     ("node_graph", "Node Graph", PanelSlot::Center),
-    ("preview", "Preview", PanelSlot::Right),
-    ("inspector", "Inspector", PanelSlot::Right),
-    ("settings", "Settings", PanelSlot::Right),
+    ("preview", "Preview", PanelSlot::RightTop),
+    ("settings", "Settings", PanelSlot::RightTop),
+    ("inspector", "Inspector", PanelSlot::RightBottom),
     ("console", "Console", PanelSlot::Bottom),
 ];
+
+/// Build the right column: top (Preview+Settings tabs) and bottom (Inspector), vertically split.
+fn build_right_column(
+    tiles: &mut egui_tiles::Tiles<PaneEntry>,
+    top_tiles: Vec<egui_tiles::TileId>,
+    bottom_tiles: Vec<egui_tiles::TileId>,
+) -> Option<egui_tiles::TileId> {
+    let top = match top_tiles.len() {
+        0 => None,
+        1 => Some(top_tiles[0]),
+        _ => Some(tiles.insert_tab_tile(top_tiles)),
+    };
+    let bottom = match bottom_tiles.len() {
+        0 => None,
+        1 => Some(bottom_tiles[0]),
+        _ => Some(tiles.insert_tab_tile(bottom_tiles)),
+    };
+    match (top, bottom) {
+        (Some(t), Some(b)) => {
+            let v = tiles.insert_vertical_tile(vec![t, b]);
+            if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
+                tiles.get_mut(v)
+            {
+                linear.shares.set_share(t, 0.6);
+                linear.shares.set_share(b, 0.4);
+            }
+            Some(v)
+        }
+        (Some(t), None) => Some(t),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
 
 impl TileLayoutState {
     fn build_default_tree(&mut self) {
@@ -69,7 +103,8 @@ impl TileLayoutState {
 
         let mut tiles = egui_tiles::Tiles::default();
         let mut center_tiles = Vec::new();
-        let mut right_tiles = Vec::new();
+        let mut right_top_tiles = Vec::new();
+        let mut right_bottom_tiles = Vec::new();
         let mut bottom_tiles = Vec::new();
 
         for (idx, &(str_id, title, slot)) in PANEL_DEFS.iter().enumerate() {
@@ -87,7 +122,8 @@ impl TileLayoutState {
 
             match slot {
                 PanelSlot::Center => center_tiles.push(tile_id),
-                PanelSlot::Right => right_tiles.push(tile_id),
+                PanelSlot::RightTop => right_top_tiles.push(tile_id),
+                PanelSlot::RightBottom => right_bottom_tiles.push(tile_id),
                 PanelSlot::Bottom => bottom_tiles.push(tile_id),
             }
         }
@@ -100,19 +136,16 @@ impl TileLayoutState {
             tiles.insert_pane(PaneEntry { panel_id: 9999 })
         };
 
-        let right = if right_tiles.len() > 1 {
-            Some(tiles.insert_tab_tile(right_tiles))
-        } else {
-            right_tiles.into_iter().next()
-        };
+        // Build right column: top tabs + bottom tabs, vertically split
+        let right = build_right_column(&mut tiles, right_top_tiles, right_bottom_tiles);
 
-        let main_area = if let Some(right_tab) = right {
-            let h = tiles.insert_horizontal_tile(vec![center, right_tab]);
+        let main_area = if let Some(right_col) = right {
+            let h = tiles.insert_horizontal_tile(vec![center, right_col]);
             if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
                 tiles.get_mut(h)
             {
                 linear.shares.set_share(center, 0.7);
-                linear.shares.set_share(right_tab, 0.3);
+                linear.shares.set_share(right_col, 0.3);
             }
             h
         } else {
