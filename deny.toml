@@ -36,6 +36,7 @@ allow = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "MPL-2.0",
+    "GPL-3.0",
     # Font licenses (used by egui fonts)
     "OFL-1.1",
     "Ubuntu-font-1.0",

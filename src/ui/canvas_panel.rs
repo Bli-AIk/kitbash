@@ -1,6 +1,7 @@
 // Preview panel — displays the Sprite Output result or interactive CanvasLayout canvas.
 
 use crate::app::KitbashApp;
+use crate::node::types::PortValue;
 use crate::ui::node_graph_panel::KitbashNode;
 
 /// Draw the preview panel.
@@ -320,33 +321,47 @@ fn trace_image_ids_from_pin(app: &KitbashApp, pin_id: egui_snarl::InPinId) -> Ve
     result
 }
 
-/// Draw the Sprite Output preview — renders images connected to the output node.
+/// Draw the Sprite Output preview — renders the cached execution result.
 fn draw_output_preview(
     _ui: &mut egui::Ui,
     painter: &egui::Painter,
     canvas_rect: egui::Rect,
     app: &mut KitbashApp,
 ) {
-    let image_ids = collect_output_image_ids(app);
-    let zoom = app.preview_zoom;
+    let output_node = app.node_graph_panel.output_node;
 
-    for &img_id in &image_ids {
-        let Some(img) = app.image_store.images.iter_mut().find(|im| im.id == img_id) else {
-            continue;
-        };
-        let tex_id = ensure_texture(painter.ctx(), img);
-        let w = img.image.width() as f32 * zoom;
-        let h = img.image.height() as f32 * zoom;
-        let img_rect = egui::Rect::from_min_size(canvas_rect.min, egui::vec2(w, h));
+    // SpriteOutput has 1 input (index 0). Its execution stores the passthrough.
+    // The executor stores (output_node, 0) as the passthrough result.
+    let Some(PortValue::Image(node_img)) = app.node_cache.get(&(output_node, 0)) else {
+        return;
+    };
 
-        let mut mesh = egui::Mesh::with_texture(tex_id);
-        mesh.add_rect_with_uv(
-            img_rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-        painter.add(mesh);
+    if node_img.width <= 1 && node_img.height <= 1 {
+        return;
     }
+
+    // Convert NodeImage to egui texture
+    let tex_key = format!("preview_output_{}x{}", node_img.width, node_img.height);
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+        [node_img.width as _, node_img.height as _],
+        &node_img.pixels,
+    );
+    let texture = painter
+        .ctx()
+        .load_texture(tex_key, color_image, egui::TextureOptions::NEAREST);
+
+    let zoom = app.preview_zoom;
+    let w = node_img.width as f32 * zoom;
+    let h = node_img.height as f32 * zoom;
+    let img_rect = egui::Rect::from_min_size(canvas_rect.min, egui::vec2(w, h));
+
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    mesh.add_rect_with_uv(
+        img_rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+    painter.add(mesh);
 }
 
 fn ensure_texture(ctx: &egui::Context, img: &mut crate::app::ImportedImage) -> egui::TextureId {

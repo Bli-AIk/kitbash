@@ -1,6 +1,6 @@
 # Kitbash
 
-[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
+[![license](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" />
 
 > 当前状态: 🚧 早期开发中（架构重构进行中）
@@ -105,10 +105,4 @@ trunk build --release          # Web/WASM
 
 ## 许可证
 
-本项目采用双协议授权：
-
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
-  或 [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-* MIT license ([LICENSE-MIT](LICENSE-MIT) 或 [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
-
-由你任选其一。
+本项目采用 [GNU 通用公共许可证 v3.0](LICENSE) 或更高版本授权。

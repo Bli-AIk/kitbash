@@ -2,6 +2,7 @@
 
 #[allow(dead_code)]
 pub mod builtin;
+pub mod executor;
 #[allow(dead_code)]
 pub mod graph;
 #[allow(dead_code)]

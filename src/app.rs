@@ -92,6 +92,9 @@ pub struct KitbashApp {
     // Node graph
     pub node_graph_panel: NodeGraphPanel,
 
+    // Execution cache
+    pub node_cache: crate::node::executor::ExecutionCache,
+
     // Console
     pub console: ConsoleState,
 }
@@ -121,6 +124,7 @@ impl Default for KitbashApp {
             settings,
             config_path,
             node_graph_panel: NodeGraphPanel::default(),
+            node_cache: Default::default(),
             console: ConsoleState {
                 auto_scroll: true,
                 ..Default::default()
@@ -138,6 +142,10 @@ impl eframe::App for KitbashApp {
         apply_scale_if_needed(ctx, self.settings.ui_scale, &mut self.scale_applied);
         process_messages(self);
         process_settings_save(self, ctx);
+
+        // Execute node graph
+        self.node_cache =
+            crate::node::executor::execute_snarl(&self.node_graph_panel.snarl, &self.image_store);
 
         let action = crate::ui::menu_bar::show_menu_bar(ctx, &self.theme_config, &self.tile_state);
         if let Some(action) = action {

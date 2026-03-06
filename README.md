@@ -1,6 +1,6 @@
 # Kitbash
 
-[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
+[![license](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" />
 
 > Current Status: 🚧 Early Development (Architecture refactor in progress)
@@ -137,10 +137,4 @@ Whether you want to fix a bug, add a feature, or improve documentation:
 
 ## License
 
-This project is licensed under either of
-
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
-  or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
-
-at your option.
+This project is licensed under the [GNU General Public License v3.0](LICENSE) or later.
