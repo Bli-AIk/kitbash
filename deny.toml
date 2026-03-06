@@ -14,7 +14,11 @@ no-default-features = false
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-ignore = []
+ignore = [
+    # paste is used by metal, kira, rav1e (Bevy/image dependencies)
+    # No security vulnerability, just unmaintained status
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 allow = [
@@ -35,6 +39,8 @@ allow = [
     # Font licenses (used by egui fonts)
     "OFL-1.1",
     "Ubuntu-font-1.0",
+    # Non-SPDX licenses (epaint_default_fonts uses OFL-1.1 + UFL-1.0)
+    "LicenseRef-UFL-1.0",
 ]
 confidence-threshold = 0.8
 
