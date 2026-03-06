@@ -3,6 +3,10 @@ name = "kitbash"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "A modular 2D character assembly tool for game developers"
+repository = "https://github.com/Bli-AIk/kitbash"
+homepage = "https://github.com/Bli-AIk/kitbash"
+documentation = "https://github.com/Bli-AIk/kitbash"
 
 [dependencies]
 eframe = "0.30"
