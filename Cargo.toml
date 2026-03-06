@@ -3,14 +3,16 @@ name = "kitbash"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "A modular 2D character assembly tool for game developers"
+description = "A node-based 2D sprite editor with WASM plugin extensibility"
 repository = "https://github.com/Bli-AIk/kitbash"
 homepage = "https://github.com/Bli-AIk/kitbash"
 documentation = "https://github.com/Bli-AIk/kitbash"
 
 [dependencies]
-eframe = "0.30"
+eframe = "0.33"
 egui = "0.33"
+egui_tiles = { version = "0.14", features = ["serde"] }
+catppuccin-egui = { version = "5.7", default-features = false, features = ["egui33"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
@@ -20,25 +22,26 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 log = "0.4"
-futures = "0.3" 
+futures = "0.3"
 env_logger = "0.11"
+toml = "0.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
 web-sys = { version = "0.3", features = [
-    "HtmlAnchorElement", 
-    "Document", 
-    "Window", 
-    "Url", 
-    "Blob", 
+    "HtmlAnchorElement",
+    "Document",
+    "Window",
+    "Url",
+    "Blob",
     "BlobPropertyBag",
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "Element",
     "HtmlElement",
     "CssStyleDeclaration",
-    "Node" 
+    "Node",
 ] }
 
 [profile.release]
