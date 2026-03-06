@@ -2,6 +2,7 @@
 
 mod app;
 mod config;
+mod font;
 mod imaging;
 mod node;
 mod plugin;

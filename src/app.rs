@@ -3,12 +3,13 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::config::{ConfigPath, EditorSettings};
-use crate::node::graph::NodeGraph;
+use crate::font::FontState;
 use crate::theme::{self, ThemeConfig};
 use crate::ui::console_panel::ConsoleState;
 use crate::ui::dock::TileLayoutState;
 use crate::ui::menu_bar::MenuAction;
 use crate::ui::node_graph_panel::NodeGraphPanel;
+use crate::ui::settings_panel::SettingsPanel;
 
 // ─── Data types ─────────────────────────────────────────────────────
 
@@ -72,8 +73,13 @@ pub struct KitbashApp {
     settings: EditorSettings,
     config_path: ConfigPath,
 
+    // Settings panel
+    pub settings_panel: SettingsPanel,
+
+    // Font
+    font_state: FontState,
+
     // Node graph
-    pub node_graph: NodeGraph,
     pub node_graph_panel: NodeGraphPanel,
 
     // Console
@@ -85,6 +91,9 @@ impl Default for KitbashApp {
         let (sender, receiver) = channel();
         let config_path = ConfigPath::default();
         let settings = EditorSettings::load(&config_path.0);
+
+        let mut settings_panel = SettingsPanel::default();
+        settings_panel.sync_from(&settings);
 
         Self {
             canvas_size: [64, 64],
@@ -100,9 +109,10 @@ impl Default for KitbashApp {
             tile_state: TileLayoutState::default(),
             theme_config: settings.theme.clone(),
             theme_applied: false,
+            settings_panel,
+            font_state: FontState::default(),
             settings,
             config_path,
-            node_graph: NodeGraph::default(),
             node_graph_panel: NodeGraphPanel::default(),
             console: ConsoleState {
                 auto_scroll: true,
@@ -116,8 +126,10 @@ impl Default for KitbashApp {
 
 impl eframe::App for KitbashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        crate::font::install_fonts(ctx, &self.settings.font, &mut self.font_state);
         apply_theme_if_needed(ctx, &self.theme_config, &mut self.theme_applied);
         process_messages(self);
+        process_settings_save(self, ctx);
 
         let action = crate::ui::menu_bar::show_menu_bar(ctx, &self.theme_config, &self.tile_state);
         if let Some(action) = action {
@@ -156,6 +168,35 @@ fn process_messages(app: &mut KitbashApp) {
             }
         }
     }
+}
+
+fn process_settings_save(app: &mut KitbashApp, ctx: &egui::Context) {
+    if !app.settings_panel.save_requested {
+        return;
+    }
+    app.settings_panel.save_requested = false;
+
+    app.settings.ui_scale = app.settings_panel.edited_scale;
+    app.settings.theme = ThemeConfig {
+        theme: app.settings_panel.edited_theme,
+        brightness: app.settings_panel.edited_brightness,
+    };
+
+    // Check if font changed
+    if app.settings.font.custom_font_path != app.settings_panel.edited_font_path {
+        app.settings.font.custom_font_path = app.settings_panel.edited_font_path.clone();
+        app.font_state.installed = false;
+    }
+
+    // Apply theme
+    app.theme_config = app.settings.theme.clone();
+    theme::apply_theme(ctx, app.theme_config.theme, app.theme_config.brightness);
+    app.theme_applied = true;
+
+    // Apply UI scale
+    ctx.set_pixels_per_point(app.settings.ui_scale);
+
+    app.settings.save(&app.config_path.0);
 }
 
 fn handle_menu_action(app: &mut KitbashApp, ctx: &egui::Context, action: MenuAction) {

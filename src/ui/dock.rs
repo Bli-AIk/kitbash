@@ -58,6 +58,7 @@ const PANEL_DEFS: &[(&str, &str, PanelSlot)] = &[
     ("node_graph", "Node Graph", PanelSlot::Center),
     ("inspector", "Inspector", PanelSlot::Right),
     ("layers", "Layers", PanelSlot::Right),
+    ("settings", "Settings", PanelSlot::Right),
     ("console", "Console", PanelSlot::Bottom),
 ];
 
@@ -222,19 +223,23 @@ impl<'a> egui_tiles::Behavior<PaneEntry> for DockBehavior<'a> {
     fn dragged_overlay_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
         egui::Color32::from_rgba_unmultiplied(0x00, 0x4b, 0xc2, 100)
     }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// Route a panel string ID to the correct draw function.
 fn dispatch_panel(ui: &mut egui::Ui, app: &mut KitbashApp, panel_id: &str) {
     match panel_id {
         "canvas" => super::canvas_panel::draw_canvas(ui, app),
-        "node_graph" => super::node_graph_panel::draw_node_graph(
-            ui,
-            &mut app.node_graph,
-            &mut app.node_graph_panel,
-        ),
+        "node_graph" => super::node_graph_panel::draw_node_graph(ui, &mut app.node_graph_panel),
         "inspector" => super::inspector_panel::draw_inspector(ui, app),
         "layers" => super::layer_panel::draw_layer_list(ui, app),
+        "settings" => super::settings_panel::draw_settings(ui, &mut app.settings_panel),
         "console" => super::console_panel::draw_console(ui, &mut app.console),
         _ => {
             ui.label(format!("Unknown panel: {panel_id}"));

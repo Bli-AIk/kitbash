@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::font::FontConfig;
 use crate::theme::ThemeConfig;
 
 /// Persistent editor settings.
@@ -11,6 +12,8 @@ pub struct EditorSettings {
     pub ui_scale: f32,
     #[serde(default)]
     pub theme: ThemeConfig,
+    #[serde(default)]
+    pub font: FontConfig,
 }
 
 fn default_ui_scale() -> f32 {
@@ -22,6 +25,7 @@ impl Default for EditorSettings {
         Self {
             ui_scale: 1.0,
             theme: ThemeConfig::default(),
+            font: FontConfig::default(),
         }
     }
 }

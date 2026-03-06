@@ -7,3 +7,4 @@ pub mod inspector_panel;
 pub mod layer_panel;
 pub mod menu_bar;
 pub mod node_graph_panel;
+pub mod settings_panel;
