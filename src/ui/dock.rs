@@ -54,10 +54,9 @@ impl Default for TileLayoutState {
 
 /// All panels in the editor, with their string IDs, display titles, and slots.
 const PANEL_DEFS: &[(&str, &str, PanelSlot)] = &[
-    ("canvas", "Canvas", PanelSlot::Center),
     ("node_graph", "Node Graph", PanelSlot::Center),
+    ("preview", "Preview", PanelSlot::Right),
     ("inspector", "Inspector", PanelSlot::Right),
-    ("layers", "Layers", PanelSlot::Right),
     ("settings", "Settings", PanelSlot::Right),
     ("console", "Console", PanelSlot::Bottom),
 ];
@@ -235,10 +234,9 @@ impl<'a> egui_tiles::Behavior<PaneEntry> for DockBehavior<'a> {
 /// Route a panel string ID to the correct draw function.
 fn dispatch_panel(ui: &mut egui::Ui, app: &mut KitbashApp, panel_id: &str) {
     match panel_id {
-        "canvas" => super::canvas_panel::draw_canvas(ui, app),
         "node_graph" => super::node_graph_panel::draw_node_graph(ui, &mut app.node_graph_panel),
+        "preview" => super::canvas_panel::draw_preview(ui, app),
         "inspector" => super::inspector_panel::draw_inspector(ui, app),
-        "layers" => super::layer_panel::draw_layer_list(ui, app),
         "settings" => super::settings_panel::draw_settings(ui, &mut app.settings_panel),
         "console" => super::console_panel::draw_console(ui, &mut app.console),
         _ => {

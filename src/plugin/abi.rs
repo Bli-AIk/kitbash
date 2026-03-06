@@ -82,3 +82,59 @@ pub fn decode_image(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     }
     Some((width, height, data[8..8 + expected].to_vec()))
 }
+
+/// Port direction for NodeManifest.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum PortDirection {
+    Input,
+    Output,
+}
+
+/// A port declaration in a NodeManifest.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PortDecl {
+    pub name: String,
+    pub direction: PortDirection,
+    pub port_type: String,
+}
+
+/// A parameter declaration in a NodeManifest.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ParamDecl {
+    pub name: String,
+    pub param_type: String,
+    pub default_json: String,
+}
+
+/// Manifest returned by a WASM plugin's `node_info()` export.
+///
+/// Describes the node's identity, ports, and parameters so the host can wire it
+/// into the node graph without hard-coding knowledge of the plugin.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NodeManifest {
+    pub id: String,
+    pub display_name: String,
+    pub category: String,
+    pub ports: Vec<PortDecl>,
+    pub params: Vec<ParamDecl>,
+}
+
+/// Encode a `ScatteredPack` for transfer across the WASM boundary.
+///
+/// Wire format: `[entry_count: u32 LE]` followed by entries, each:
+/// `[name_len: u32 LE][name bytes][x: i32 LE][y: i32 LE][width: u32 LE][height: u32 LE][RGBA data]`
+pub fn encode_scattered_pack(entries: &[(String, u32, u32, i32, i32, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (name, w, h, x, y, pixels) in entries {
+        let name_bytes = name.as_bytes();
+        buf.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(name_bytes);
+        buf.extend_from_slice(&x.to_le_bytes());
+        buf.extend_from_slice(&y.to_le_bytes());
+        buf.extend_from_slice(&w.to_le_bytes());
+        buf.extend_from_slice(&h.to_le_bytes());
+        buf.extend_from_slice(pixels);
+    }
+    buf
+}

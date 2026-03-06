@@ -153,5 +153,6 @@ fn default_value_for_type(port_type: PortType) -> PortValue {
         PortType::Int => PortValue::Int(0),
         PortType::Bool => PortValue::Bool(false),
         PortType::String => PortValue::String(String::new()),
+        PortType::ScatteredPack => PortValue::ScatteredPack(super::types::ScatteredPack::default()),
     }
 }

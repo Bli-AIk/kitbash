@@ -7,8 +7,6 @@ use crate::ui::dock::TileLayoutState;
 #[derive(Debug)]
 pub enum MenuAction {
     ImportImages,
-    ExportPng,
-    ExportZip,
     ThemeChanged(ThemeConfig),
     TogglePanel(String),
     ResetLayout,
@@ -39,15 +37,6 @@ fn file_menu(ui: &mut egui::Ui) -> Option<MenuAction> {
     ui.menu_button("File", |ui| {
         if ui.button("Import Images...").clicked() {
             action = Some(MenuAction::ImportImages);
-            ui.close();
-        }
-        ui.separator();
-        if ui.button("Export PNGs").clicked() {
-            action = Some(MenuAction::ExportPng);
-            ui.close();
-        }
-        if ui.button("Export ZIP").clicked() {
-            action = Some(MenuAction::ExportZip);
             ui.close();
         }
     });

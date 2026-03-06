@@ -3,9 +3,9 @@
 [![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kitbash.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kitbash.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" />
 
-> 当前状态: 🚧 早期开发中 (Early Development)
+> 当前状态: 🚧 早期开发中（架构重构进行中）
 
-**Kitbash** — 专为游戏开发者设计的模块化 2D 角色拼装工具。
+**Kitbash** — 基于节点图的 2D 精灵合成工具，支持 WASM 插件扩展。
 
 | English         | Simplified Chinese                 |
 |-----------------|---------------------------------|
@@ -13,114 +13,102 @@
 
 ## 简介
 
-`Kitbash` 是一个运行在 Web 和桌面端的 2D 资产合成工具。  
-它解决了分散的精灵部件（如头部、身体、武器）难以预览和组装的问题，允许用户导入素材、调整位置与缩放，并以像素完美的精度导出。
+`Kitbash` 是一个基于节点图的 2D 资产合成工具，专为游戏开发者设计。
+它通过可视化节点图管线，解决分散精灵部件（如头部、身体、武器）的组装问题。
 
-使用 `Kitbash`，你只需拖入素材，在画布上拼装，即可一键导出适合游戏引擎使用的图层或合成图。  
-未来计划支持动画预览和精灵表（Spritesheet）生成。
+**核心理念**：所有图像处理操作均表达为有向图中的节点。内置操作（颜色替换、网格切割、合成）
+与第三方扩展使用相同的 WASM 插件 ABI。
 
 ## 功能特性
 
-*   **批量导入**: 支持拖拽或文件选择器批量导入图片 (`PNG`, `JPG`, `WEBP`)。
-*   **像素级拼装**:
-    *   **最近邻缩放 (Nearest Neighbor)**: 保证像素画风格清晰锐利，绝无模糊。
-    *   **像素对齐**: 整数坐标吸附，确保渲染精准。
-    *   **交互式画布**: 支持中键拖拽平移视图、滚轮缩放。
-*   **图层管理**:
-    *   支持显示/隐藏切换。
-    *   图层 Z轴 顺序调整。
-    *   每个部件独立的位移与缩放控制。
-*   **高级导出**:
-    *   **导出倍率**: 支持 1.0x 到 10.0x 的高分辨率输出。
-    *   **分层 ZIP 导出**: 生成包含所有图层的 `.zip` 包，每个图层均为全尺寸透明 PNG，可直接在 Godot/Unity 中重组。
-    *   **元数据**: 附带 `data.json` 记录所有图层的原始变换数据。
+* **节点图管线**: 在可视化 DAG 中连接处理节点（颜色替换、网格切割、合成等）。
+* **固定 I/O 节点**: `Image Input` 和 `Sprite Output` 为永久节点——始终存在，不可删除。
+* **CanvasLayout 节点**: 交互式多图层画布，支持拖拽定位，作为节点图中的节点。
+* **批量导入**: 支持拖拽或文件选择器批量导入图片 (`PNG`, `JPG`, `WEBP`)。
+* **像素完美渲染**: 最近邻缩放确保像素画清晰锐利。
+* **WASM 插件系统**: 通过编译为 WebAssembly 的自定义处理节点进行扩展。
+* **面板布局**: 可调整大小和拖拽的面板布局（节点图、预览、检查器、控制台、设置）。
+* **CJK 字体支持**: 内嵌思源黑体，支持中日韩文字渲染。
+* **主题系统**: 受 Rerun 启发的深色主题，支持亮度调节。
+* **跨平台**: 支持原生桌面（Linux/macOS/Windows）和浏览器（WASM）运行。
 
 ## 使用指南
 
-1.  **安装 Rust** (如果尚未安装):
-    ```bash
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    ```
+1. **安装 Rust**（如未安装）:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
-2.  **克隆仓库**:
-    ```bash
-    git clone https://github.com/Bli-AIk/kitbash.git
-    cd kitbash
-    ```
+2. **克隆仓库**:
+   ```bash
+   git clone https://github.com/Bli-AIk/kitbash.git
+   cd kitbash
+   ```
 
-3.  **本地运行 (原生桌面版)**:
-    ```bash
-    cargo run --release
-    ```
+3. **本地运行（原生桌面版）**:
+   ```bash
+   cargo run --release
+   ```
 
-4.  **本地运行 (Web/WASM 版)**:
-    首先安装 Trunk 工具和 WASM 目标:
-    ```bash
-    cargo install --locked trunk
-    rustup target add wasm32-unknown-unknown
-    ```
-    启动开发服务器:
-    ```bash
-    ./start_dev.sh
-    # 或者
-    trunk serve
-    ```
-    在浏览器访问 `http://localhost:8080`。
+4. **本地运行（Web/WASM 版）**:
+   ```bash
+   cargo install --locked trunk
+   rustup target add wasm32-unknown-unknown
+   trunk serve
+   ```
+   在浏览器访问 `http://localhost:8080`。
 
-5.  **配置**:
-    右侧面板提供了画布尺寸、背景颜色及导出倍率的设置选项。
+5. **使用 just**（如已安装 [just](https://github.com/casey/just)）:
+   ```bash
+   just run          # 原生 debug 模式
+   just run-release  # 原生 release 模式
+   just web          # WASM 开发服务器
+   just check        # clippy + tokei 检查
+   ```
 
 ## 构建指南
 
 ### 前置要求
 
-*   Rust 1.75 或更高版本
-*   `wasm32-unknown-unknown` 编译目标 (仅 Web 版需要)
+* Rust 1.75 或更高版本
+* `wasm32-unknown-unknown` 编译目标（仅 Web 版需要）
 
 ### 构建步骤
 
-1.  **克隆仓库**:
-    ```bash
-    git clone https://github.com/Bli-AIk/kitbash.git
-    cd kitbash
-    ```
-
-2.  **构建 (原生)**:
-    ```bash
-    cargo build --release
-    ```
-
-3.  **构建 (Web)**:
-    ```bash
-    trunk build --release
-    ```
-    构建产物位于 `dist/` 目录。
+```bash
+git clone https://github.com/Bli-AIk/kitbash.git
+cd kitbash
+cargo build --release          # 原生
+trunk build --release          # Web/WASM
+```
 
 ## 依赖项
 
-本项目使用了以下核心 Crates:
-
-| Crate                                             | Version | Description                 |
-| ------------------------------------------------- | ------- | --------------------------- |
-| [eframe](https://crates.io/crates/eframe)         | 0.30    | GUI 框架 (基于 egui)        |
-| [image](https://crates.io/crates/image)           | 0.25    | 图像处理核心                |
-| [zip](https://crates.io/crates/zip)               | 0.6     | ZIP 文件生成 (WASM 兼容)    |
-| [rfd](https://crates.io/crates/rfd)               | 0.15    | 原生/Web 文件对话框         |
-| [wasm-bindgen](https://crates.io/crates/wasm-bindgen) | 0.2 | WASM JavaScript 绑定        |
+| Crate | 版本 | 说明 |
+|-------|------|------|
+| [eframe](https://crates.io/crates/eframe) | 0.33 | GUI 框架 (egui) |
+| [egui_tiles](https://crates.io/crates/egui_tiles) | 0.14 | 面板布局系统 |
+| [egui-snarl](https://crates.io/crates/egui-snarl) | 0.9 | 节点图编辑器 |
+| [catppuccin-egui](https://crates.io/crates/catppuccin-egui) | 5.7 | 主题预设 |
+| [image](https://crates.io/crates/image) | 0.25 | 图像处理 |
+| [zip](https://crates.io/crates/zip) | 0.6 | ZIP 生成 |
+| [rfd](https://crates.io/crates/rfd) | 0.15 | 文件对话框 |
+| [toml](https://crates.io/crates/toml) | 0.8 | 配置文件解析 |
 
 ## 贡献
 
 欢迎提交贡献！
 无论是修复 Bug、添加新功能还是改进文档，请随时：
 
-*   提交 **Issue** 或 **Pull Request**。
-*   分享你的想法或讨论设计方案。
+* 提交 **Issue** 或 **Pull Request**。
+* 分享你的想法或讨论设计方案。
 
 ## 许可证
 
 本项目采用双协议授权：
 
-*   Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) 或 [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-*   MIT license ([LICENSE-MIT](LICENSE-MIT) 或 [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
+  或 [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
+* MIT license ([LICENSE-MIT](LICENSE-MIT) 或 [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
 
 由你任选其一。

@@ -11,31 +11,46 @@ use crate::ui::menu_bar::MenuAction;
 use crate::ui::node_graph_panel::NodeGraphPanel;
 use crate::ui::settings_panel::SettingsPanel;
 
-// ─── Data types ─────────────────────────────────────────────────────
+// ─── Image store ────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
-pub struct Transform {
-    pub offset: egui::Vec2,
-    pub scale: f32,
+/// An imported image available for use in the node graph.
+pub struct ImportedImage {
+    pub id: u64,
+    pub name: String,
+    pub image: image::DynamicImage,
+    pub texture: Option<egui::TextureHandle>,
 }
 
-impl Default for Transform {
+/// Stores all imported images, referenced by nodes via ID.
+pub struct ImageStore {
+    pub images: Vec<ImportedImage>,
+    next_id: u64,
+}
+
+impl Default for ImageStore {
     fn default() -> Self {
         Self {
-            offset: egui::Vec2::ZERO,
-            scale: 1.0,
+            images: Vec::new(),
+            next_id: 1,
         }
     }
 }
 
-pub struct LayerImage {
-    pub id: u64,
-    pub name: String,
-    pub source_image: image::DynamicImage,
-    pub texture: Option<egui::TextureHandle>,
-    pub transform: Transform,
-    pub visible: bool,
+impl ImageStore {
+    pub fn add(&mut self, name: String, image: image::DynamicImage) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.images.push(ImportedImage {
+            id,
+            name,
+            image,
+            texture: None,
+        });
+        id
+    }
 }
+
+// ─── Messages ───────────────────────────────────────────────────────
 
 pub enum AppMessage {
     ImageLoaded(String, Vec<u8>),
@@ -44,23 +59,17 @@ pub enum AppMessage {
 // ─── App state ──────────────────────────────────────────────────────
 
 pub struct KitbashApp {
-    // Canvas config
-    pub canvas_size: [u32; 2],
-    pub bg_color: egui::Color32,
-    pub export_scale: u32,
-
-    // Legacy layer state
-    pub layers: Vec<LayerImage>,
-    pub selected_layer_id: Option<u64>,
-    next_id: u64,
+    // Image store (replaces legacy layers)
+    pub image_store: ImageStore,
 
     // Async messaging
     pub msg_sender: Sender<AppMessage>,
     msg_receiver: Receiver<AppMessage>,
 
-    // UI state
+    // Preview state
     pub preview_zoom: f32,
     pub canvas_pan: egui::Vec2,
+    pub preview_auto_fit: bool,
 
     // Dock layout
     pub tile_state: TileLayoutState,
@@ -68,6 +77,7 @@ pub struct KitbashApp {
     // Theme
     pub theme_config: ThemeConfig,
     theme_applied: bool,
+    scale_applied: bool,
 
     // Settings
     settings: EditorSettings,
@@ -96,19 +106,16 @@ impl Default for KitbashApp {
         settings_panel.sync_from(&settings);
 
         Self {
-            canvas_size: [64, 64],
-            bg_color: egui::Color32::TRANSPARENT,
-            export_scale: 1,
-            layers: Vec::new(),
-            selected_layer_id: None,
-            next_id: 0,
+            image_store: ImageStore::default(),
             msg_sender: sender,
             msg_receiver: receiver,
-            preview_zoom: 4.0,
+            preview_zoom: 1.0,
             canvas_pan: egui::Vec2::ZERO,
+            preview_auto_fit: true,
             tile_state: TileLayoutState::default(),
             theme_config: settings.theme.clone(),
             theme_applied: false,
+            scale_applied: false,
             settings_panel,
             font_state: FontState::default(),
             settings,
@@ -128,6 +135,7 @@ impl eframe::App for KitbashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         crate::font::install_fonts(ctx, &self.settings.font, &mut self.font_state);
         apply_theme_if_needed(ctx, &self.theme_config, &mut self.theme_applied);
+        apply_scale_if_needed(ctx, self.settings.ui_scale, &mut self.scale_applied);
         process_messages(self);
         process_settings_save(self, ctx);
 
@@ -147,26 +155,34 @@ fn apply_theme_if_needed(ctx: &egui::Context, config: &ThemeConfig, applied: &mu
     }
 }
 
+fn apply_scale_if_needed(ctx: &egui::Context, ui_scale: f32, applied: &mut bool) {
+    if !*applied {
+        ctx.set_pixels_per_point(ui_scale);
+        *applied = true;
+    }
+}
+
 fn process_messages(app: &mut KitbashApp) {
     while let Ok(msg) = app.msg_receiver.try_recv() {
         match msg {
             AppMessage::ImageLoaded(name, bytes) => {
                 if let Ok(img) = image::load_from_memory(&bytes) {
-                    let id = app.next_id;
-                    app.next_id += 1;
-                    app.layers.push(LayerImage {
-                        id,
-                        name,
-                        source_image: img,
-                        texture: None,
-                        transform: Transform::default(),
-                        visible: true,
-                    });
+                    let id = app.image_store.add(name, img);
+                    add_image_to_input_node(&mut app.node_graph_panel, id);
+                    app.preview_auto_fit = true;
                 } else {
                     log::error!("Failed to decode image: {name}");
                 }
             }
         }
+    }
+}
+
+/// Register a new image ID in the fixed ImageInput node.
+fn add_image_to_input_node(panel: &mut NodeGraphPanel, image_id: u64) {
+    let node = &mut panel.snarl[panel.input_node];
+    if let crate::ui::node_graph_panel::KitbashNode::ImageInput { image_ids } = node {
+        image_ids.push(image_id);
     }
 }
 
@@ -182,20 +198,16 @@ fn process_settings_save(app: &mut KitbashApp, ctx: &egui::Context) {
         brightness: app.settings_panel.edited_brightness,
     };
 
-    // Check if font changed
     if app.settings.font.custom_font_path != app.settings_panel.edited_font_path {
         app.settings.font.custom_font_path = app.settings_panel.edited_font_path.clone();
         app.font_state.installed = false;
     }
 
-    // Apply theme
     app.theme_config = app.settings.theme.clone();
     theme::apply_theme(ctx, app.theme_config.theme, app.theme_config.brightness);
     app.theme_applied = true;
 
-    // Apply UI scale
     ctx.set_pixels_per_point(app.settings.ui_scale);
-
     app.settings.save(&app.config_path.0);
 }
 
@@ -203,16 +215,6 @@ fn handle_menu_action(app: &mut KitbashApp, ctx: &egui::Context, action: MenuAct
     match action {
         MenuAction::ImportImages => {
             trigger_import(app);
-        }
-        MenuAction::ExportPng => {
-            crate::imaging::export::export_individual_pngs(
-                &app.layers,
-                app.canvas_size,
-                app.export_scale,
-            );
-        }
-        MenuAction::ExportZip => {
-            crate::imaging::export::export_zip(&app.layers, app.canvas_size, app.export_scale);
         }
         MenuAction::ThemeChanged(config) => {
             app.theme_config = config.clone();
@@ -229,6 +231,11 @@ fn handle_menu_action(app: &mut KitbashApp, ctx: &egui::Context, action: MenuAct
             app.tile_state = TileLayoutState::default();
         }
     }
+}
+
+/// Public wrapper for triggering image import (used by inspector).
+pub fn trigger_import_public(app: &mut KitbashApp) {
+    trigger_import(app);
 }
 
 fn trigger_import(app: &mut KitbashApp) {

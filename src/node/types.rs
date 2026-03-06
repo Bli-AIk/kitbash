@@ -59,6 +59,23 @@ pub struct SpriteList {
     pub sprites: Vec<NodeImage>,
 }
 
+/// A scattered-format export: named sprite images with their original positions.
+///
+/// Used by the Sprite Output node for preserving spatial layout in exports.
+#[derive(Clone, Debug, Default)]
+pub struct ScatteredPack {
+    pub entries: Vec<ScatteredEntry>,
+}
+
+/// A single entry in a `ScatteredPack`.
+#[derive(Clone, Debug)]
+pub struct ScatteredEntry {
+    pub name: String,
+    pub image: NodeImage,
+    pub x: i32,
+    pub y: i32,
+}
+
 /// The value types that can flow between node ports.
 #[derive(Clone, Debug)]
 pub enum PortValue {
@@ -66,6 +83,7 @@ pub enum PortValue {
     Palette(Palette),
     Mask(Mask),
     SpriteList(SpriteList),
+    ScatteredPack(ScatteredPack),
     Color(Color),
     Float(f32),
     Int(i32),
@@ -80,6 +98,7 @@ pub enum PortType {
     Palette,
     Mask,
     SpriteList,
+    ScatteredPack,
     Color,
     Float,
     Int,
@@ -94,6 +113,7 @@ impl PortValue {
             Self::Palette(_) => PortType::Palette,
             Self::Mask(_) => PortType::Mask,
             Self::SpriteList(_) => PortType::SpriteList,
+            Self::ScatteredPack(_) => PortType::ScatteredPack,
             Self::Color(_) => PortType::Color,
             Self::Float(_) => PortType::Float,
             Self::Int(_) => PortType::Int,
@@ -110,6 +130,7 @@ impl std::fmt::Display for PortType {
             Self::Palette => write!(f, "Palette"),
             Self::Mask => write!(f, "Mask"),
             Self::SpriteList => write!(f, "SpriteList"),
+            Self::ScatteredPack => write!(f, "ScatteredPack"),
             Self::Color => write!(f, "Color"),
             Self::Float => write!(f, "Float"),
             Self::Int => write!(f, "Int"),

@@ -1,9 +1,7 @@
 // Export system — PNG and ZIP output.
+// Export is driven by the Sprite Output node; these are utility functions.
 
 use std::io::{Cursor, Write};
-
-use crate::app::LayerImage;
-use crate::imaging::canvas::render_single_layer;
 
 /// Trigger a file download (platform-specific).
 #[cfg(target_arch = "wasm32")]
@@ -50,58 +48,34 @@ pub fn trigger_download(filename: &str, data: &[u8]) {
     }
 }
 
-/// Export each visible layer as an individual PNG.
-pub fn export_individual_pngs(layers: &[LayerImage], canvas_size: [u32; 2], export_scale: u32) {
-    for (i, layer) in layers.iter().enumerate() {
-        if let Some(img) = render_single_layer(canvas_size, layer, export_scale) {
-            let mut bytes: Vec<u8> = Vec::new();
-            img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
-                .unwrap();
-            let filename = format!("{}_{}.png", i, layer.name);
-            trigger_download(&filename, &bytes);
-        }
-    }
+/// Export a single image as PNG.
+pub fn export_png(img: &image::RgbaImage, filename: &str) {
+    let mut bytes: Vec<u8> = Vec::new();
+    img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    trigger_download(filename, &bytes);
 }
 
-/// Export all layers as a ZIP with metadata.
-pub fn export_zip(layers: &[LayerImage], canvas_size: [u32; 2], export_scale: u32) {
+/// Export multiple named images as a ZIP with metadata.
+pub fn export_images_zip(images: &[(&str, &image::RgbaImage)], metadata_json: &str) {
     let mut zip_buffer = Vec::new();
     {
         let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
         let options =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-        for (i, layer) in layers.iter().enumerate() {
-            if let Some(img) = render_single_layer(canvas_size, layer, export_scale) {
-                let mut bytes = Vec::new();
-                img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
-                    .unwrap();
-                let filename = format!("{}_{}.png", i, layer.name);
-                zip.start_file(filename, options).unwrap();
-                zip.write_all(&bytes).unwrap();
-            }
+        for (name, img) in images {
+            let mut bytes = Vec::new();
+            img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+                .unwrap();
+            zip.start_file(name.to_string(), options).unwrap();
+            zip.write_all(&bytes).unwrap();
         }
 
-        // Metadata JSON
-        let meta: Vec<serde_json::Value> = layers
-            .iter()
-            .map(|l| {
-                serde_json::json!({
-                    "name": l.name,
-                    "visible": l.visible,
-                    "scale": l.transform.scale,
-                    "offset": {
-                        "x": l.transform.offset.x.round(),
-                        "y": l.transform.offset.y.round()
-                    },
-                })
-            })
-            .collect();
-        let json_str = serde_json::to_string_pretty(&meta).unwrap();
         zip.start_file("data.json", options).unwrap();
-        zip.write_all(json_str.as_bytes()).unwrap();
+        zip.write_all(metadata_json.as_bytes()).unwrap();
 
         zip.finish().unwrap();
     }
-    trigger_download("kitbash_layers.zip", &zip_buffer);
+    trigger_download("kitbash_export.zip", &zip_buffer);
 }

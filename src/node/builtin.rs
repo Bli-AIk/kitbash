@@ -1,7 +1,11 @@
 // Built-in node implementations that ship with kitbash.
+//
+// Each built-in node also provides a `manifest()` method that returns the same
+// `NodeManifest` a WASM plugin would — eat our own dogfood.
 
 use super::graph::{NodeInfo, NodeProcessor, ParamInfo, PortInfo};
 use super::types::{Color, NodeImage, PortType, PortValue};
+use crate::plugin::abi::{NodeManifest, ParamDecl, PortDecl, PortDirection};
 
 // ─── Image Input ────────────────────────────────────────────────────
 
@@ -284,4 +288,41 @@ fn color_distance(a: &Color, b: &Color) -> f32 {
     let db = a.b as f32 - b.b as f32;
     let da = a.a as f32 - b.a as f32;
     (dr * dr + dg * dg + db * db + da * da).sqrt()
+}
+
+// ─── Manifest Generation ────────────────────────────────────────────
+
+/// Convert a `NodeInfo` into a `NodeManifest` (shared by all built-in nodes).
+pub fn node_info_to_manifest(info: &NodeInfo) -> NodeManifest {
+    let mut ports = Vec::new();
+    for p in &info.inputs {
+        ports.push(PortDecl {
+            name: p.name.clone(),
+            direction: PortDirection::Input,
+            port_type: p.port_type.to_string(),
+        });
+    }
+    for p in &info.outputs {
+        ports.push(PortDecl {
+            name: p.name.clone(),
+            direction: PortDirection::Output,
+            port_type: p.port_type.to_string(),
+        });
+    }
+    let params = info
+        .params
+        .iter()
+        .map(|pi| ParamDecl {
+            name: pi.name.clone(),
+            param_type: pi.port_type.to_string(),
+            default_json: pi.default_json.clone().unwrap_or_default(),
+        })
+        .collect();
+    NodeManifest {
+        id: info.name.to_lowercase().replace(' ', "_"),
+        display_name: info.name.clone(),
+        category: info.category.clone(),
+        ports,
+        params,
+    }
 }
